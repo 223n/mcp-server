@@ -2,8 +2,13 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { createServer } from "./src/server.js";
 
+import { initOutput } from "./src/tools/output.js";
+
+// OUTPUT_DIR が使えるかを先に確かめる。stdout は MCP の通信路なので、警告は stderr に出る
+const allowWrites = await initOutput();
+
 // stdout は MCP の通信路なので、ログは必ず stderr（console.error）に出す
-const handle = serveStdio(() => createServer({ allowFiles: true }), {
+const handle = serveStdio(() => createServer({ allowFiles: true, allowWrites }), {
   onerror: (error) => console.error("[mcp]", error?.message ?? error),
 });
 

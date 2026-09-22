@@ -22,6 +22,34 @@ function parseFileRoots(value) {
     });
 }
 
+// OUTPUT_DIR は 1 件だけ。"=" を 2 つ以上書いたものや ";" で並べたものは、
+// 意図した場所と違うところへ書く事故になるため受け取らない
+function parseOutputDir(value) {
+  const entry = value.trim();
+
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.includes(";") || entry.split("=").length > 2) {
+    throw new Error('OUTPUT_DIR must be a single "hostPath=containerPath" entry');
+  }
+
+  const [hostPath, localPath = hostPath] = entry.split("=");
+
+  const local = toUnixPath(localPath);
+
+  if (!local || local === "") {
+    throw new Error("OUTPUT_DIR must not be empty or the filesystem root");
+  }
+
+  return {
+    hostPrefix: toUnixPath(hostPath).toLowerCase(),
+    hostLabel: hostPath.trim(),
+    localPath: local,
+  };
+}
+
 const cfAccessTeamDomain = env.CF_ACCESS_TEAM_DOMAIN.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 
 // HTTP に認証がかかっているか。ファイルの読み込みを HTTP で許すかどうかの判断に使う
@@ -52,6 +80,13 @@ export const config = {
   httpAllowFilesRequested: env.HTTP_ALLOW_FILES,
 
   httpAllowFiles: env.HTTP_ALLOW_FILES && httpAuthConfigured,
+
+  outputDir: parseOutputDir(env.OUTPUT_DIR),
+
+  // 書き出しは読み込みとは別の条件にする。HTTP_ALLOW_FILES=true だけでは書けない
+  httpAllowWritesRequested: env.HTTP_ALLOW_WRITES,
+
+  httpAllowWrites: env.HTTP_ALLOW_WRITES && httpAuthConfigured,
 
   mcpAuthToken: env.MCP_AUTH_TOKEN,
 

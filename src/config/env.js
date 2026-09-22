@@ -65,6 +65,14 @@ export const env = {
 
   HTTP_ALLOW_FILES: process.env.HTTP_ALLOW_FILES === "true",
 
+  // ローカルのモデルの出力を書き出す先（ホスト側パス=コンテナー内パス）。1 つだけ。
+  // 設定したときだけ save_output が使えるようになる。読み込みの許可ルートとは別に持つ
+  OUTPUT_DIR: process.env.OUTPUT_DIR || "",
+
+  // HTTP でも書き出しを許すかどうか。HTTP_ALLOW_FILES とは別に持ち、
+  // 読み込みを許しただけの設定が、更新で黙って書き込みに広がらないようにする
+  HTTP_ALLOW_WRITES: process.env.HTTP_ALLOW_WRITES === "true",
+
   // HTTP の認証。どちらかを設定すると、満たさないリクエストは 401 になる
   MCP_AUTH_TOKEN: process.env.MCP_AUTH_TOKEN || "",
 

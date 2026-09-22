@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+
+import { tmpdir } from "node:os";
+
 import path from "node:path";
 
 import { after, before, describe, test } from "node:test";
@@ -290,6 +294,149 @@ describe("認証なしで HTTP_ALLOW_FILES=true にしたとき", () => {
       const { tools } = await client.listTools();
 
       assert.ok(!tools.some((t) => t.name === "list_files"));
+
+      assert.ok(!tools.some((t) => t.name === "read_file"));
+    } finally {
+      await client.close();
+    }
+  });
+
+  // resources/read にはツール名が無く、mcp__ollama__* の許可では止められない。
+  // 認証がないときに能力ごと出ていないことを、ここで必ず確かめる
+  test("resources も出さない", async () => {
+    const client = await connect(server.url);
+
+    try {
+      assert.equal(client.getServerCapabilities().resources, undefined);
+
+      await assert.rejects(client.readResource({ uri: "file:///work/dev/app/src/Main.php" }));
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("認証なしで HTTP_ALLOW_WRITES=true にしたとき", () => {
+  let server;
+
+  let outDir;
+
+  before(async () => {
+    outDir = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-http-out-")));
+
+    server = await startHttpServer({
+      OLLAMA_URL: "http://127.0.0.1:9",
+
+      OUTPUT_DIR: outDir,
+
+      HTTP_ALLOW_WRITES: "true",
+    });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  test("保存の引数は出さず、警告を出す", async () => {
+    assert.match(server.output(), /HTTP_ALLOW_WRITES=true is ignored/);
+
+    const client = await connect(server.url);
+
+    try {
+      const { tools } = await client.listTools();
+
+      const chat = tools.find((t) => t.name === "ollama_chat");
+
+      assert.equal(chat.inputSchema.properties.save_output, undefined);
+
+      assert.notEqual(chat.annotations?.readOnlyHint, false);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("認証つきで HTTP_ALLOW_WRITES=true にしたとき", () => {
+  let ollama;
+
+  let server;
+
+  let outDir;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    outDir = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-http-save-")));
+
+    server = await startHttpServer({
+      OLLAMA_URL: ollama.url,
+
+      MCP_AUTH_TOKEN: "test-token",
+
+      OUTPUT_DIR: outDir,
+
+      HTTP_ALLOW_WRITES: "true",
+    });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  test("保存した結果はパスと抜粋だけを返す", async () => {
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      const { tools } = await client.listTools();
+
+      const chat = tools.find((t) => t.name === "ollama_chat");
+
+      assert.ok(chat.inputSchema.properties.save_output);
+
+      assert.equal(chat.annotations.readOnlyHint, false);
+
+      const result = await client.callTool({
+        name: "ollama_chat",
+
+        arguments: { prompt: "hello", save_output: true, output_name: "draft" },
+      });
+
+      assert.match(text(result), /Saved: /);
+
+      assert.match(text(result), /draft\.md/);
+
+      assert.ok(existsSync(path.join(outDir, "draft.md")));
+
+      // resource_link のブロックも付く
+      const link = result.content.find((block) => block.type === "resource_link");
+
+      assert.ok(link, JSON.stringify(result.content));
+
+      assert.equal(link.name, "draft.md");
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("危ない output_name は拒む", async () => {
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      for (const name of ["../escape", "NUL", "shell.php"]) {
+        const result = await client.callTool({
+          name: "ollama_chat",
+
+          arguments: { prompt: "hello", save_output: true, output_name: name },
+        });
+
+        assert.equal(result.isError, true, name);
+      }
     } finally {
       await client.close();
     }

@@ -6,11 +6,13 @@ import { SYSTEM_PROMPTS } from "../config/prompts.js";
 
 import { ollamaExplainError } from "./error.js";
 
-import { fileRootsLabel, listFiles } from "./files.js";
+import { fileRootsLabel, listFiles, readOneFile, readRoots } from "./files.js";
 
 import { createHealthTool } from "./health.js";
 
 import { ollamaChatTool, ollamaListModels } from "./ollama.js";
+
+import { outputLabel, outputReady } from "./output.js";
 
 import { ollamaReviewCode } from "./review.js";
 
@@ -42,8 +44,10 @@ const modelArg = (fallback) =>
       `Ollama model name. Default: ${fallback}. "nucbox-fast:latest" (qwen2.5-coder 7B) is quicker; "qwen2.5-coder:14b" (= nucbox-deep) is stronger. Call ollama_list_models for the full list.`,
     );
 
-export function buildTools({ allowFiles }) {
-  const filesEnabled = allowFiles && config.fileRoots.length > 0;
+export function buildTools({ allowFiles, allowWrites = false }) {
+  const filesEnabled = allowFiles && readRoots().length > 0;
+
+  const writesEnabled = allowWrites && outputReady();
 
   const filesArg = filesEnabled
     ? {
@@ -52,7 +56,48 @@ export function buildTools({ allowFiles }) {
           .max(20)
           .optional()
           .describe(
-            `Absolute file paths to include (Windows or container paths under: ${fileRootsLabel()}). The server reads them, so do not paste file contents yourself. Max ~90k characters in total.`,
+            `Absolute paths or globs under: ${fileRootsLabel()} (Windows or container paths). The server reads them, so do not paste file contents yourself. Append \`#L10-200\` for a line range. A glob such as \`C:\\dev\\app\\src\\**\\*.php\` expands to at most 40 files. Pass a glob, not a bare directory.`,
+          ),
+      }
+    : {};
+
+  // ファイル機能の有無に関わらず常に出す。サーバーはファイルシステムに触れないため
+  const inlineFilesArg = {
+    inline_files: z
+      .array(
+        z.strictObject({
+          name: z.string().min(1).max(200).describe("Display name; its extension picks the fence language."),
+
+          content: z.string().max(90000),
+        }),
+      )
+      .max(10)
+      .optional()
+      .describe(
+        `Files whose text you already have and the server cannot read (outside the allowed roots, or from this session). This does NOT save tokens: you pay for \`content\` either way.${filesEnabled ? " When a path is readable by the server, use `files` instead." : ""}`,
+      ),
+
+    line_numbers: z
+      .boolean()
+      .optional()
+      .describe("Prefix file lines with line numbers (default false)."),
+  };
+
+  const saveArgs = writesEnabled
+    ? {
+        save_output: z
+          .boolean()
+          .optional()
+          .describe(
+            `Write the answer to a file under ${outputLabel()} instead of returning it in full. The response then carries the path, the first and last part of the text, and the usual stats. Use it for long drafts and translations.`,
+          ),
+
+        output_name: z
+          .string()
+          .max(64)
+          .optional()
+          .describe(
+            'Base name for the saved file, letters, digits, "_" and "-" only (no dots, no path separators). The server adds ".md" and never overwrites.',
           ),
       }
     : {};
@@ -60,6 +105,13 @@ export function buildTools({ allowFiles }) {
   const filesHint = filesEnabled
     ? ` Prefer passing \`files\` (paths under ${fileRootsLabel()}) over pasting contents: it saves Claude tokens.`
     : "";
+
+  const saveHint = writesEnabled
+    ? ` Long answers can be written to a file with \`save_output\` instead of being returned in full.`
+    : "";
+
+  // 保存を有効にしたときは、読み取り専用だと名乗らない
+  const CHAT_ANNOTATIONS = writesEnabled ? { ...READ_ONLY, readOnlyHint: false } : READ_ONLY;
 
   const fileTools = filesEnabled
     ? [
@@ -107,6 +159,32 @@ export function buildTools({ allowFiles }) {
               signal: ctx?.mcpReq?.signal,
             }),
         },
+
+        {
+          name: "read_file",
+
+          title: "Files: read one file",
+
+          description:
+            `Read one file under ${fileRootsLabel()} on the machine that runs Ollama, without sending it to the local model. ` +
+            "Use it to read back what `save_output` wrote, or to check a small file. Append `#L10-200` to read only part of it. Read-only.",
+
+          inputSchema: z.strictObject({
+            path: z
+              .string()
+              .max(1024)
+              .describe("Absolute path of the file, optionally with a `#L10-200` line range."),
+
+            line_numbers: z
+              .boolean()
+              .optional()
+              .describe("Prefix lines with line numbers (default false)."),
+          }),
+
+          annotations: { ...READ_ONLY, idempotentHint: true },
+
+          handler: (args) => readOneFile(args.path, { lineNumbers: args.line_numbers ?? false }),
+        },
       ]
     : [];
 
@@ -121,7 +199,8 @@ export function buildTools({ allowFiles }) {
         "Good for first drafts, summaries, translations, boilerplate, test scaffolding, brainstorming and bulk text processing. " +
         "The local model (qwen2.5-coder 7B/14B, 32k context) is much weaker than Claude: give it complete context in one prompt and verify its output before relying on it. " +
         "Typical latency 5-90 s." +
-        filesHint,
+        filesHint +
+        saveHint,
 
       inputSchema: z.strictObject({
         prompt: z.string().min(1).max(200000).describe("The full instruction for the local model."),
@@ -137,21 +216,16 @@ export function buildTools({ allowFiles }) {
 
         ...filesArg,
 
-        ...(filesEnabled
-          ? {
-              line_numbers: z
-                .boolean()
-                .optional()
-                .describe("Prefix file lines with line numbers (default false)."),
-            }
-          : {}),
+        ...inlineFilesArg,
+
+        ...saveArgs,
 
         temperature: z.number().min(0).max(2).optional().describe("Default 0.7."),
 
         max_tokens: maxTokensArg(4096),
       }),
 
-      annotations: READ_ONLY,
+      annotations: CHAT_ANNOTATIONS,
 
       handler: ollamaChatTool,
     },
@@ -167,9 +241,13 @@ export function buildTools({ allowFiles }) {
         filesHint,
 
       inputSchema: z.strictObject({
-        code: z.string().max(200000).optional().describe("Source code to review (use this or `files`)."),
+        code: z.string().max(200000).optional().describe("Source code to review (use this, `files` or `inline_files`)."),
 
         ...filesArg,
+
+        ...inlineFilesArg,
+
+        ...saveArgs,
 
         language: z.string().max(100).optional(),
 
@@ -184,7 +262,7 @@ export function buildTools({ allowFiles }) {
         max_tokens: maxTokensArg(1536),
       }),
 
-      annotations: READ_ONLY,
+      annotations: CHAT_ANNOTATIONS,
 
       handler: ollamaReviewCode,
     },
@@ -209,12 +287,16 @@ export function buildTools({ allowFiles }) {
 
         ...filesArg,
 
+        ...inlineFilesArg,
+
+        ...saveArgs,
+
         model: modelArg(config.deepModel),
 
         max_tokens: maxTokensArg(1536),
       }),
 
-      annotations: READ_ONLY,
+      annotations: CHAT_ANNOTATIONS,
 
       handler: ollamaExplainError,
     },
@@ -245,7 +327,7 @@ export function buildTools({ allowFiles }) {
 
       annotations: { ...READ_ONLY, idempotentHint: true },
 
-      handler: createHealthTool({ allowFiles }),
+      handler: createHealthTool({ allowFiles, allowWrites }),
     },
 
     ...fileTools,

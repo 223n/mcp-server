@@ -2,9 +2,11 @@ import { config } from "../config/config.js";
 
 import { ollamaRequest } from "../ollama/client.js";
 
-import { fileRootsLabel } from "./files.js";
+import { fileRootsLabel, readRoots } from "./files.js";
 
-export function createHealthTool({ allowFiles }) {
+import { outputLabel, outputReady } from "./output.js";
+
+export function createHealthTool({ allowFiles, allowWrites = false }) {
   return async function ollamaHealth(_args, ctx) {
     const signal = ctx?.mcpReq?.signal;
 
@@ -14,9 +16,9 @@ export function createHealthTool({ allowFiles }) {
     ]);
 
     const files =
-      allowFiles && config.fileRoots.length > 0
-        ? `enabled (${fileRootsLabel()})`
-        : "disabled";
+      allowFiles && readRoots().length > 0 ? `enabled (${fileRootsLabel()})` : "disabled";
+
+    const output = allowWrites && outputReady() ? `enabled (${outputLabel()})` : "disabled";
 
     return [
       `Ollama OK (version ${version.version}) at ${config.ollamaUrl}`,
@@ -25,6 +27,7 @@ export function createHealthTool({ allowFiles }) {
       `deep model: ${config.deepModel}`,
       `timeout: ${Math.round(config.ollamaTimeout / 1000)} s`,
       `file access: ${files}`,
+      `output saving: ${output}`,
     ].join("\n");
   };
 }

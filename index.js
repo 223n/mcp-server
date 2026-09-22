@@ -12,6 +12,8 @@ import { createAuthMiddleware } from "./src/http/auth.js";
 
 import { createServer } from "./src/server.js";
 
+import { initOutput } from "./src/tools/output.js";
+
 const logError = (error) => console.error("[mcp]", error?.message ?? error);
 
 function rpcError(res, status, code, message) {
@@ -110,8 +112,21 @@ if (config.httpAllowFilesRequested && !config.httpAllowFiles) {
 
 // 2026-07-28 版（server/discover）と 2025 年版（initialize）の両方にステートレスで応答する。
 // responseMode "sse" で結果を待つ間もキープアライブを流し、Cloudflare の 100 秒制限を避ける
+// OUTPUT_DIR が実在して書けるかを起動時に確かめる。使えなければ保存のツールを出さない
+const outputUsable = await initOutput({ warn: (message) => console.warn(message) });
+
+const allowWrites = config.httpAllowWrites && outputUsable;
+
+if (config.httpAllowWritesRequested && !config.httpAllowWrites) {
+  console.warn(
+    "[output] HTTP_ALLOW_WRITES=true is ignored because HTTP has no authentication. Saving stays disabled over HTTP.",
+  );
+} else if (allowWrites) {
+  console.warn("[output] Saving model output to files is enabled over HTTP (authenticated requests only).");
+}
+
 const handler = createMcpHandler(
-  () => createServer({ allowFiles: config.httpAllowFiles }),
+  () => createServer({ allowFiles: config.httpAllowFiles, allowWrites }),
 
   {
     legacy: "stateless",
