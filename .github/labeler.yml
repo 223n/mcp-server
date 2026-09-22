@@ -1,0 +1,34 @@
+# PR に、変えたファイルやブランチ名からラベルを付ける。
+# 「PR にラベルを付ける」ワークフロー（.github/workflows/labeler.yml）が actions/labeler で読む。
+# ここに書くラベルは .github/labels.yml にあるものを使う。
+
+ドキュメント:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+
+依存関係:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'package.json'
+          - 'package-lock.json'
+
+GitHub Actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/actions/**'
+
+セキュリティ:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'SECURITY.md'
+
+# リリースのワークフローが開く PR（release/vX.Y.Z → main、main → develop）には、
+# GITHUB_TOKEN が開いた PR ではラベラーが動かないため、ワークフロー側が gh pr edit で付ける。
+# ここは人がリリースブランチに push したときや、ブランチを作り直したときの補完
+リリース:
+  - head-branch:
+      - '^release/'
+      - '^merge/'

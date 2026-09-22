@@ -1,0 +1,32 @@
+name: PRにラベルを付ける
+
+# PR が変えたファイルとブランチ名から、.github/labeler.yml に従ってラベルを付ける。
+#
+# pull_request_target を使うのは、フォークからの PR でもラベルを書ける権限を得るためである。
+# このイベントは base ブランチの内容で動くため、PR 側の設定変更は効かない。
+# また PR のコードを checkout して実行してはならない（ここでは checkout しない）。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: ラベルを付ける
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read         # .github/labeler.yml を読む
+      pull-requests: write   # ラベルを付ける
+      issues: write          # ラベルの同期がまだのとき、無いラベルを作る。色と説明は次の同期で揃う
+    steps:
+      - name: ラベルを付ける
+        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          configuration-path: .github/labeler.yml
+          # 条件に合わなくなったラベルを外すか。人が付けたラベルまで外れることがあるため切ってある
+          sync-labels: false

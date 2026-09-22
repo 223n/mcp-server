@@ -1,0 +1,224 @@
+name: リリースを公開する
+
+# release/vX.Y.Z または hotfix/* の PR が main にマージされたら、タグを打ち、GitHub Release を作り、main を develop に戻す。
+#
+# 2つの経路から動く。
+#   pull_request(closed)  人が PR をマージしたとき
+#   workflow_call         release.yml が auto_merge で PR をマージしたとき
+#
+# GITHUB_TOKEN が行ったマージは pull_request(closed) のワークフローを起こさないため、後者は明示的に呼ぶ。
+#
+# hotfix/* は main から切り、その PR の中で package.json の版を上げておく（npm version patch --no-git-tag-version）。
+# 版を上げずにマージすると、同じ版のタグがすでに別のコミットにあるため、ここで止まる。
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_call:
+    inputs:
+      version:
+        description: 'リリースする版。v は付けない'
+        required: true
+        type: string
+
+# release.yml から呼ばれるときは、呼び元が group: release を握っている。
+# 同じ名前にすると互いに待ち合って進まなくなるため、別の名前にする
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DEVELOP_BRANCH: develop
+  MAIN_BRANCH: main
+
+jobs:
+  publish:
+    name: タグとGitHub Releaseを作る
+    # 人が release/* か hotfix/* の PR をマージしたとき、または release.yml から呼ばれたときだけ動く。
+    # 呼ばれたときの github コンテキストは呼び元（workflow_dispatch）のものになる
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       (startsWith(github.event.pull_request.head.ref, 'release/') ||
+        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: write        # タグを打ち、Release を作る
+      pull-requests: write   # main を develop へ戻す PR を開く
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: GitHub CLIがあることを確かめる
+        # GitHub がホストするランナーには入っている。セルフホストのランナーでは自分で入れる
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "::error::gh（GitHub CLI）が無い。ランナーに入れてから実行する: https://cli.github.com/"
+            exit 1
+          fi
+
+      - name: mainを取得
+        # zizmor: ignore[artipacked] このジョブはタグと develop を push するため、認証情報を残す
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.MAIN_BRANCH }}
+          # タグと develop を扱うため、履歴をすべて取る
+          fetch-depth: 0
+
+      - name: Nodeを用意
+        # 版を package.json から読むのに使う。セルフホストのランナーに Node が無くても動く
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: 版を決める
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # 実際の版は main の package.json から取る
+          actual="$(node -p "require('./package.json').version")"
+
+          # 期待する版は、呼び元の入力か、PR のブランチ名（release/vX.Y.Z）から取る。
+          # hotfix/* はブランチ名に版を持たないため、package.json の版をそのまま使う
+          case "${HEAD_REF}" in
+            release/*) expected="${HEAD_REF#release/}"; expected="${expected#v}" ;;
+            *) expected="${actual}" ;;
+          esac
+          if [ -n "${INPUT_VERSION}" ]; then
+            expected="${INPUT_VERSION#v}"
+          fi
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::${MAIN_BRANCH} の package.json の版（${actual}）とリリースの版（${expected}）が食い違う"
+            exit 1
+          fi
+
+          prerelease=false
+          case "${actual}" in
+            *-*) prerelease=true ;;
+          esac
+          # 消すブランチ。PR から動いたときはその head、呼ばれたときは release/vX.Y.Z
+          branch="${HEAD_REF:-release/v${actual}}"
+          {
+            echo "version=${actual}"
+            echo "tag=v${actual}"
+            echo "branch=${branch}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: マージの形を確かめる
+        # マージコミット以外（squash、rebase）だと、develop で取り込んだ PR がリリースノートに載らない。
+        # 止めはしないが、気付けるようにする
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          if [ -n "${MERGE_SHA}" ] && ! git rev-parse --verify --quiet "${MERGE_SHA}^2" >/dev/null; then
+            echo "::warning::PR がマージコミット以外でマージされた。リリースノートに PR が載らないことがある。次からは Create a merge commit を選ぶ"
+          fi
+
+      - name: タグを打つ
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # 同じタグを打ち直さない。片方の段だけが落ちて入れ直す場合に、ここで止まらないようにする。
+          # ただし別のコミットを指しているなら、版を上げ忘れたまま同じ版を出そうとしている
+          if git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null; then
+            if [ "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$(git rev-parse HEAD)" ]; then
+              echo "::notice::タグ ${TAG} はすでにこのコミットにある。打ち直さない"
+              exit 0
+            fi
+            echo "::error::タグ ${TAG} はすでに別のコミットにある。package.json の版を上げてから ${MAIN_BRANCH} にマージする"
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate "${TAG}" --message "${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: GitHub Releaseを作る
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "::notice::Release ${TAG} はすでにある。作り直さない"
+            exit 0
+          fi
+          # 本文は PR のタイトルとラベルから自動で作る。分類は .github/release.yml で決める
+          args=(--verify-tag --title "${TAG}" --generate-notes)
+          if [ "${PRERELEASE}" = 'true' ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${TAG}" "${args[@]}"
+          echo "- Release: $(gh release view "${TAG}" --json url --jq '.url')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: mainをdevelopへ戻す
+        # 版の更新を develop にも届ける。まず直接押し、保護されていて押せなければ PR を開く。
+        # 再実行しても壊れないよう、同じ PR がすでにあればそれを使う
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin "${DEVELOP_BRANCH}"
+          git switch --create back-merge "origin/${DEVELOP_BRANCH}"
+
+          if git merge-base --is-ancestor "origin/${MAIN_BRANCH}" HEAD; then
+            echo "${DEVELOP_BRANCH} はすでに ${MAIN_BRANCH} を含んでいる"
+            exit 0
+          fi
+
+          # 共通の祖先が無いと merge も PR も作れない。下の PR のフォールバックへ回しても、
+          # head と base の履歴が繋がらないため gh pr create が拒まれる。ここで止める
+          if ! git merge-base "origin/${MAIN_BRANCH}" HEAD >/dev/null 2>&1; then
+            echo "::error::${MAIN_BRANCH} と ${DEVELOP_BRANCH} に共通の祖先が無い。タグと Release は作れたが、${DEVELOP_BRANCH} への戻しはできない。README の「履歴が繋がっていないとき」を見て直す"
+            exit 1
+          fi
+
+          if git merge --no-ff --no-edit --message "${MAIN_BRANCH} を ${DEVELOP_BRANCH} に取り込む（${TAG}）" "origin/${MAIN_BRANCH}"; then
+            if git push origin "HEAD:${DEVELOP_BRANCH}"; then
+              echo "- ${DEVELOP_BRANCH}: ${MAIN_BRANCH} を直接取り込んだ" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::warning::${DEVELOP_BRANCH} に直接押せなかった。PR で取り込む"
+          else
+            # abort に失敗しても、下の PR のフォールバックまで進めるようにする
+            git merge --abort || true
+            echo "::warning::${MAIN_BRANCH} と ${DEVELOP_BRANCH} が衝突する。PR で取り込む"
+          fi
+
+          # 直接押せなかったときは、main の内容をそのまま載せたブランチから PR を開く
+          branch="merge/${TAG}-into-${DEVELOP_BRANCH}"
+          url="$(gh pr list --base "${DEVELOP_BRANCH}" --head "${branch}" --state open --json url --jq '.[0].url // empty')"
+          if [ -n "${url}" ]; then
+            echo "::notice::取り込みの PR はすでにある: ${url}"
+          else
+            git switch --create "${branch}" "origin/${MAIN_BRANCH}"
+            git push --set-upstream origin "${branch}"
+            url="$(gh pr create \
+              --base "${DEVELOP_BRANCH}" \
+              --head "${branch}" \
+              --title "${MAIN_BRANCH} を ${DEVELOP_BRANCH} に取り込む（${TAG}）" \
+              --body "リリース ${TAG} で上げた版を \`${DEVELOP_BRANCH}\` にも反映します。衝突があれば、この PR の上で解消してください。マージコミット（Create a merge commit）でマージしてください。")"
+            gh pr edit "${url##*/}" --add-label 'リリース' \
+              || echo "::warning::ラベル「リリース」を付けられなかった"
+          fi
+          echo "- ${DEVELOP_BRANCH}: PR で取り込む ${url}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: リリースブランチを消す
+        # マージ済みのブランチを残すと、次のリリースの「release/* が残っていないか」の確認に引っかかる
+        env:
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH}" >/dev/null 2>&1; then
+            git push origin --delete "${BRANCH}"
+            echo "ブランチ ${BRANCH} を消した"
+          else
+            echo "ブランチ ${BRANCH} はすでに無い"
+          fi

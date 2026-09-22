@@ -1,0 +1,54 @@
+# 機能の要望のフォーム。書き方の注意は 01-bug-report.yml にある。
+name: 機能の要望
+description: 新しい機能や改善を提案します
+title: '[要望] '
+labels:
+  - 機能追加
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案ありがとうございます。
+        解決したいことを中心に書いてください。方法は後から一緒に考えられます。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したいこと
+      description: 今、何に困っているかを書いてください。
+      placeholder: 例：毎回手で整形していて時間がかかる
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する方法
+      description: どう動けばよいかを書いてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考えた他の方法
+      description: 他に考えた方法があれば書いてください。
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 関係する範囲
+      description: 関係するところを選んでください。複数選べます。
+      multiple: true
+      options:
+        - 文書
+        - ワークフロー
+        - 設定
+        - その他
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 貢献
+      options:
+        - label: 自分で実装するつもりがあります

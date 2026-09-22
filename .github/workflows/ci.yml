@@ -1,0 +1,101 @@
+name: CI
+
+# 3つの検査をする。
+#   lint-ja         文書の書式（markdownlint）と日本語の書き方（textlint）。
+#                   規則は公開されている共有設定 @223n/lint-config-ja にあり、ここには「何を検査するか」だけを書く
+#   lint-workflows  ワークフローの構文と型（actionlint）
+#   zizmor          ワークフローの安全性（zizmor）。アクションの SHA 固定、権限、危険な書き方を見る
+#
+# プロジェクト固有のビルドやテストは、これらと並ぶジョブとして足す。
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  # 手で動かすため。
+  # GITHUB_TOKEN が開いた PR（リリースの PR など）では、pull_request の実行は「承認待ち」で作られ、
+  # 書き込み権限のある人が「Approve workflows to run」を押すまで動かない
+  workflow_dispatch:
+
+# 同じブランチに続けて push したとき、古い実行を止める
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-ja:
+    name: 日本語Lint
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    # 固まったまま枠を占め続けないようにする
+    timeout-minutes: 10
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 検査だけなので、認証情報は残さない
+          persist-credentials: false
+
+      - name: Nodeを用意
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # markdownlint-cli2 0.23 が Node 22 以上を求める
+          node-version: '22'
+          cache: npm
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: Markdownの書式を検査する
+        run: npm run lint:md
+
+      - name: 日本語の書き方を検査する
+        run: npm run lint:ja
+
+  lint-workflows:
+    name: ワークフローの構文検査
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: actionlintを入れる
+        id: actionlint
+        # 公式の導入スクリプトを使う。スクリプトはタグ v1.7.12 のコミットで固定し、版も渡す。
+        # shellcheck が入っていればシェルの検査も行い、無ければその規則だけ飛ばす
+        run: |
+          bash <(curl -sSfL 'https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash') 1.7.12
+
+      - name: ワークフローを検査する
+        env:
+          ACTIONLINT: ${{ steps.actionlint.outputs.executable }}
+        run: |
+          "${ACTIONLINT}" -color
+
+  zizmor:
+    name: ワークフローの安全性検査
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: zizmorで検査する
+        # zizmor-action はコンテナで動くため、セルフホストのランナーには Docker が要る。
+        # advanced-security を切ると Code scanning へは送らず、指摘があればこのジョブが失敗する。
+        # zizmor の版は固定する。版が上がると監査が増えて、変更していないのに落ちることがあるため
+        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        with:
+          version: v1.30.0
+          advanced-security: false

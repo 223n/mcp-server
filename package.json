@@ -1,0 +1,25 @@
+{
+  "name": "repo-template",
+  "version": "0.3.0",
+  "private": true,
+  "description": "リポジトリのテンプレート。日本語の文書を検査する設定と、GitHub の運用に要る設定ファイルを含む。",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "npm run lint:md && npm run lint:ja",
+    "lint:md": "markdownlint-cli2",
+    "lint:md:fix": "markdownlint-cli2 --fix",
+    "lint:ja": "textlint .",
+    "lint:ja:fix": "textlint --fix ."
+  },
+  "devDependencies": {
+    "@223n/lint-config-ja": "^1.1.0",
+    "markdownlint-cli2": "^0.23.2",
+    "textlint": "^15.8.0"
+  },
+  "overrides": {
+    "smol-toml": "^1.7.1"
+  }
+}

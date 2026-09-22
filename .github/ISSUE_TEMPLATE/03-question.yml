@@ -1,0 +1,26 @@
+# 質問のフォーム。書き方の注意は 01-bug-report.yml にある。
+name: 質問
+description: 使い方や仕様について質問します
+title: '[質問] '
+labels:
+  - 質問
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 聞きたいこと
+      description: 何を知りたいかを書いてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 試したことと調べたこと
+      description: すでに試したことや、読んだ文書があれば書いてください。
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景
+      description: 何をしようとしていて、その質問に至ったかを書いてください。

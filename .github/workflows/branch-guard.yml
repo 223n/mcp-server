@@ -1,0 +1,111 @@
+name: PRのheadブランチを確かめる
+
+# head ブランチが main か develop の Pull Request を見つけて落とす。
+#
+# このリポジトリは「Automatically delete head branches」を有効にする（scripts/setup.sh が設定する）。
+# 消えるのは head ブランチだけだが、main や develop を head にした PR をマージすると、そのブランチごと失う。
+# develop が消えると release.yml は最初の確認で止まり、Dependabot の target-branch、
+# ラベル同期の --ref、CI の push トリガーも行き先を失う。
+#
+# 判定は完全一致で行う。前方一致や部分一致にすると、リリースの仕組みが開く PR まで落ちる。
+#   release/v1.2.0              release.yml が切る
+#   merge/v1.2.0-into-develop   release-publish.yml が切る（"develop" を含む）
+#   merge/main-into-develop     手で取り込むときに切る（"main" で始まり "develop" を含む）
+#   hotfix/*                    main から切る
+#
+# ci.yml に足さず別のファイルにしてあるのは、ci.yml が push と workflow_dispatch でも動くのに対し、
+# この検査が PR のときだけのものだからである。混ぜると event_name の分岐が要り、
+# push のたびに Skipped のジョブが残る。落ちたときに何を咎められたのかが Checks の名前で分かる利点もある。
+#
+# この検査はマージを塞がない。塞ぐには main と develop の必須チェックに入れる必要があるが、
+# GITHUB_TOKEN が開いた PR（リリースの PR と取り込みの PR）ではワークフローが承認待ちのままになり、
+# 必須チェックが埋まらずにマージできなくなる。
+# 削除そのものを止めるのは、scripts/setup.sh が作る「ブランチの削除を禁止する」ルールセットである。
+on:
+  pull_request:
+    # head のブランチ名は PR の途中で変わらないが、synchronize でも動かす。
+    # チェックの結果はコミットに付くため、新しいコミットにも結果を残す
+    types: [opened, reopened, synchronize]
+
+# 同じ PR に続けて push したとき、古い実行を止める
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# イベントの中身しか見ない。checkout もしないため、読み取りだけでよい
+permissions:
+  contents: read
+
+env:
+  DEVELOP_BRANCH: develop
+  MAIN_BRANCH: main
+
+jobs:
+  head-branch:
+    name: headブランチを確かめる
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    # イベントの中身を見るだけなので短くてよい
+    timeout-minutes: 5
+    steps:
+      # リポジトリの中身は見ないため checkout しない
+      - name: headブランチを確かめる
+        # 式は run に直接置かず、env で渡す。ブランチ名は PR を開く側が決められるため、
+        # run に展開するとコマンドを差し込める（zizmor の template-injection）
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          echo "head: ${HEAD_REPO:-不明}:${HEAD_REF} → base: ${GITHUB_REPOSITORY}:${BASE_REF}"
+
+          # 完全一致だけを見る。release/*、merge/*、hotfix/*、feature/* はここを通る
+          if [ "${HEAD_REF}" != "${MAIN_BRANCH}" ] && [ "${HEAD_REF}" != "${DEVELOP_BRANCH}" ]; then
+            echo "head ブランチは ${MAIN_BRANCH} でも ${DEVELOP_BRANCH} でもない"
+            exit 0
+          fi
+
+          # フォークからの PR は落とさない。自動削除が消すのはこのリポジトリのブランチであり、
+          # このリポジトリの main と develop は失われないためである。外からの変更を止めないことを優先する。
+          # フォークが消えていると HEAD_REPO は空になり、ここを通る
+          if [ "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then
+            echo "::warning::head ブランチがフォーク（${HEAD_REPO:-不明}）の ${HEAD_REF} である。このリポジトリの ${HEAD_REF} は失われないため落とさない。次からは作業用のブランチ（feature/名前）から開くとよい"
+            exit 0
+          fi
+
+          echo "::error::head ブランチが ${HEAD_REF} である。マージ後に head ブランチを自動で消す設定のため、この PR をマージすると ${HEAD_REF} ブランチごと失う。この PR は閉じ、作業用のブランチを切って開き直す"
+
+          {
+            echo "## head ブランチに \`${HEAD_REF}\` は使えない"
+            echo
+            echo "このリポジトリは「Automatically delete head branches」を有効にしている。"
+            echo "マージすると head ブランチは自動で消えるため、この PR は \`${HEAD_REF}\` ブランチごと失う。"
+            echo
+            echo "### 代わりにすること"
+            echo
+            if [ "${HEAD_REF}" = "${DEVELOP_BRANCH}" ]; then
+              echo "\`${DEVELOP_BRANCH}\` の内容を \`${MAIN_BRANCH}\` へ出すときは、Actions の「リリース」を実行する。"
+              echo "ワークフローが \`release/vX.Y.Z\` ブランチを切り、そこを head にして PR を開く。"
+              echo
+              echo "手で \`merge/${DEVELOP_BRANCH}-into-${MAIN_BRANCH}\` のようなブランチを切ってはいけない。"
+              echo "release-publish.yml は head が \`release/\` か \`hotfix/\` で始まる PR にしか反応せず、"
+              echo "タグも GitHub Release も作られないまま ${MAIN_BRANCH} だけが進む。"
+            else
+              echo "\`${MAIN_BRANCH}\` の内容を \`${DEVELOP_BRANCH}\` へ戻すときは、「リリースを公開する」ワークフローに任せる。"
+              echo "直接押せないときは、ワークフローが \`merge/vX.Y.Z-into-${DEVELOP_BRANCH}\` ブランチから PR を開く。"
+              echo
+              echo "ワークフローの外で取り込む必要があるときは、作業用のブランチを切ってから PR を開き直す。"
+              echo
+              echo '```bash'
+              echo "git switch --create merge/${MAIN_BRANCH}-into-${DEVELOP_BRANCH} origin/${MAIN_BRANCH}"
+              echo "git push --set-upstream origin merge/${MAIN_BRANCH}-into-${DEVELOP_BRANCH}"
+              echo "gh pr create --base ${DEVELOP_BRANCH} --head merge/${MAIN_BRANCH}-into-${DEVELOP_BRANCH} --title \"${MAIN_BRANCH} を ${DEVELOP_BRANCH} に取り込む\""
+              echo '```'
+            fi
+            echo
+            echo "この PR は閉じる。\`gh pr merge --delete-branch\` は使わない。"
+            echo "理由と直し方は \`CLAUDE.md\` の「main と develop を Pull Request の head にしない」にある。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit 1

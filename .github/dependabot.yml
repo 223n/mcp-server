@@ -1,0 +1,105 @@
+# Dependabot の設定。npm の依存と GitHub Actions のアクションを毎週まとめて更新する。
+# 参考: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+#
+# labels は既定のラベル（dependencies など英語のもの）を「置き換える」。
+# ここに書いたラベルは Dependabot が作らず、リポジトリに無ければ黙って無視される。
+# .github/labels.yml に同じ名前で定義し、「ラベルを同期する」ワークフローを先に動かしておく。
+#
+# 確認者（reviewers）の設定は廃止された。確認を求める相手は .github/CODEOWNERS に書く。
+#
+# エントリは4つある。GitFlow に沿って版の更新は develop に向けて開くが、
+# セキュリティ更新は常に既定ブランチに向けて開かれ、target-branch のあるエントリの設定が効かない。
+# そのため既定ブランチ向けのエントリを版の更新なし（open-pull-requests-limit: 0）で足し、
+# セキュリティ更新にも同じラベルと接頭辞が付くようにしている。
+version: 2
+
+updates:
+  # ---- npm。package.json と package-lock.json。版の更新は develop へ
+  - package-ecosystem: npm
+    directory: /
+    target-branch: develop
+    schedule:
+      # 毎週月曜の朝に確かめる
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - npm
+    # 同時に開く PR の上限。既定は 5。セキュリティ更新は数に入らない
+    open-pull-requests-limit: 10
+    # 公開されてから日数が経つまで取り込まない。壊れた版を掴まないためである。
+    # いちばん短い patch でも 3 日待ち、大きな更新ほど長く待つ
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    # minor と patch の更新は、本番用と開発用の 2 つの PR にまとめる。major は個別に開いて内容を確かめる
+    groups:
+      npm-production:
+        dependency-type: production
+        update-types: [minor, patch]
+      npm-development:
+        dependency-type: development
+        update-types: [minor, patch]
+    commit-message:
+      # 「依存を更新: Bump ...」の形になる。
+      # Dependabot は末尾が英数字か閉じ括弧のときだけコロンを補うため、日本語の接頭辞では自分で書く
+      prefix: '依存を更新:'
+
+  # ---- npm。既定ブランチ向け。セキュリティ更新にラベルと接頭辞を付けるためのエントリで、版の更新はしない
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - npm
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: '依存を更新:'
+
+  # ---- GitHub Actions。.github/workflows の uses に書いたアクション。版の更新は develop へ
+  - package-ecosystem: github-actions
+    # GitHub Actions では / を指定する。.github/workflows と根の action.yml が対象になる
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - GitHub Actions
+    open-pull-requests-limit: 5
+    # github-actions は default-days だけに対応する
+    cooldown:
+      default-days: 7
+    # アクションの更新は major も含めてすべて 1 つの PR にまとめる。
+    # github-actions では dependency-type が使えないため patterns で指定する
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: 'アクションを更新:'
+
+  # ---- GitHub Actions。既定ブランチ向け。セキュリティ更新にラベルと接頭辞を付けるためのエントリ
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - GitHub Actions
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: 'アクションを更新:'

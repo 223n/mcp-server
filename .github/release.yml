@@ -1,0 +1,36 @@
+# GitHub Release の本文を自動で作るときの分類。ラベルで振り分ける。
+# 「リリースを公開する」ワークフローが gh release create --generate-notes で使う。
+# 参考: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  exclude:
+    labels:
+      # リリースの PR そのものと、戻しの PR は変更ではない
+      - リリース
+      - 重複
+      - 無効
+      - 対応しない
+    # リリースのワークフローが開く PR の作者。New Contributors に載らないようにする
+    authors:
+      - github-actions[bot]
+  categories:
+    - title: 破壊的変更
+      labels:
+        - 破壊的変更
+    - title: セキュリティ
+      labels:
+        - セキュリティ
+    - title: 新しい機能
+      labels:
+        - 機能追加
+    - title: 不具合の修正
+      labels:
+        - バグ
+    - title: 文書
+      labels:
+        - ドキュメント
+    - title: 依存関係の更新
+      labels:
+        - 依存関係
+    - title: その他の変更
+      labels:
+        - '*'

@@ -1,0 +1,349 @@
+name: リリース
+
+# 版を入力すると、develop から release/vX.Y.Z ブランチを切り、版を上げて main への PR を開く。
+#
+#   develop ──▶ release/vX.Y.Z ──(PR)──▶ main ──▶ タグ vX.Y.Z と GitHub Release ──▶ develop へ戻す
+#
+# PR を人がマージすると「リリースを公開する」（release-publish.yml）が動き、
+# タグと GitHub Release を作って main を develop に戻す。
+# auto_merge を有効にすると、人手を挟まずにこのワークフローの中で PR をマージし、公開まで進める。
+# ただし main に必須のチェックや承認のルールがあると、auto_merge はマージで止まる。
+# GITHUB_TOKEN が開いた PR の CI は承認待ちのままで、ルールを満たせないためである。
+# その場合は人が PR をマージすれば、release-publish.yml が動いて公開まで進む。
+#
+# PR は必ずマージコミット（Create a merge commit）でマージする。
+# squash や rebase にすると、リリースノートに develop で取り込んだ PR が載らず、次の版の PR が衝突する。
+#
+# 一度だけ要る設定:
+#   Settings > Actions > General > Workflow permissions で
+#   「Allow GitHub Actions to create and approve pull requests」を有効にする。
+#   これが無いと gh pr create が拒まれる。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'リリースする版。v は付けない（例: 1.2.0、1.2.0-rc.1）'
+        required: true
+        type: string
+      auto_merge:
+        description: 'PR を人手で確認せず、そのままマージしてタグと GitHub Release まで進める'
+        required: false
+        type: boolean
+        default: false
+
+# リリースは同時に1つだけ動かす。途中の実行を止めると半端な状態が残るため、待たせる
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# 既定は読み取りだけにする。要る権限は各ジョブで足す
+permissions:
+  contents: read
+
+env:
+  DEVELOP_BRANCH: develop
+  MAIN_BRANCH: main
+
+jobs:
+  prepare:
+    name: リリースブランチとPRを作る
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: write        # release ブランチを押す
+      pull-requests: write   # PR を開く
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      branch: ${{ steps.version.outputs.branch }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_url: ${{ steps.pr.outputs.url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: GitHub CLIがあることを確かめる
+        # GitHub がホストするランナーには入っている。セルフホストのランナーでは自分で入れる
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "::error::gh（GitHub CLI）が無い。ランナーに入れてから実行する: https://cli.github.com/"
+            exit 1
+          fi
+
+      - name: 版の書式を確かめる
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION#v}"
+          # semver.org が示す正規表現。先頭の 0 や空の識別子（rc..1）は通さない
+          num='(0|[1-9][0-9]*)'
+          ident='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          re="^${num}\.${num}\.${num}(-${ident}(\.${ident})*)?$"
+          if ! printf '%s' "${version}" | grep -Eq "${re}"; then
+            echo "::error::版の書式が違う: ${INPUT_VERSION}（例: 1.2.0、1.2.0-rc.1）"
+            exit 1
+          fi
+          {
+            echo "version=${version}"
+            echo "tag=v${version}"
+            echo "branch=release/v${version}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: developブランチがあることを確かめる
+        # 無いまま checkout に進むと、原因の分かりにくい失敗になる
+        run: |
+          if ! gh api "repos/${GITHUB_REPOSITORY}/branches/${DEVELOP_BRANCH}" --silent 2>/dev/null; then
+            echo "::error::${DEVELOP_BRANCH} ブランチが無い。main から作ってから実行する"
+            exit 1
+          fi
+
+      - name: developを取得
+        # zizmor: ignore[artipacked] このジョブは release ブランチを push するため、認証情報を残す
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DEVELOP_BRANCH }}
+          # 最新のタグと main の版と比べるため、履歴とタグをすべて取る
+          fetch-depth: 0
+
+      - name: Nodeを用意
+        # 版の比較にも node を使うため、その前に用意する。セルフホストのランナーに Node が無くても動く
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: タグとブランチが未使用で、版が新しいことを確かめる
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::タグ ${TAG} はすでにある"
+            exit 1
+          fi
+          # release ブランチは同時に1つだけ。別の版が開いたままだと、後の PR が package.json で衝突する
+          if git ls-remote --exit-code --heads origin 'refs/heads/release/*' >/dev/null 2>&1; then
+            echo "::error::release/* ブランチが残っている。前のリリースの PR をマージするか閉じてから実行する"
+            git ls-remote --heads origin 'refs/heads/release/*'
+            exit 1
+          fi
+
+          # 今の版より大きいことを確かめる。
+          # 基準は develop の版だけでなく、main の版と最新のタグも見る。
+          # 前のリリースの戻しが止まっていると develop の版が古いままになるためである。
+          # 比べ方は semver の 11 項に従う。識別子を . で分け、数字どうしは数値、英字は文字列で比べ、
+          # 数字と英字なら数字が小さい。数字が同じなら正式版がプレリリースより大きい
+          current="$(node -p "require('./package.json').version")"
+          main_version="$(git show "origin/${MAIN_BRANCH}:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" 2>/dev/null || true)"
+          latest_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+          echo "develop: ${current} / main: ${main_version:-無し} / 最新のタグ: ${latest_tag:-無し}"
+
+          node -e '
+            const [next, ...bases] = process.argv.slice(1)
+            const parse = (v) => {
+              const [core, ...pre] = v.split("-")
+              return { core: core.split(".").map(Number), pre: pre.join("-") }
+            }
+            const cmpIdent = (a, b) => {
+              const an = /^[0-9]+$/.test(a)
+              const bn = /^[0-9]+$/.test(b)
+              if (an && bn) return Math.sign(Number(a) - Number(b))
+              if (an) return -1
+              if (bn) return 1
+              return a < b ? -1 : a > b ? 1 : 0
+            }
+            const cmpPre = (a, b) => {
+              if (!a && !b) return 0
+              if (!a) return 1
+              if (!b) return -1
+              const as = a.split(".")
+              const bs = b.split(".")
+              for (let i = 0; i < Math.max(as.length, bs.length); i += 1) {
+                if (as[i] === undefined) return -1
+                if (bs[i] === undefined) return 1
+                const c = cmpIdent(as[i], bs[i])
+                if (c !== 0) return c
+              }
+              return 0
+            }
+            const compare = (a, b) => {
+              const pa = parse(a)
+              const pb = parse(b)
+              for (let i = 0; i < 3; i += 1) {
+                const c = Math.sign(pa.core[i] - pb.core[i])
+                if (c !== 0) return c
+              }
+              return cmpPre(pa.pre, pb.pre)
+            }
+            for (const base of bases.filter(Boolean)) {
+              const c = compare(next, base)
+              if (c === 0) {
+                console.log("::error::" + next + " は今の版と同じである")
+                process.exit(1)
+              }
+              if (c < 0) {
+                console.log("::error::" + next + " は今の版 " + base + " より小さい")
+                process.exit(1)
+              }
+            }
+            console.log("版: " + bases.filter(Boolean).join(", ") + " → " + next)
+          ' "${VERSION}" "${current}" "${main_version}" "${latest_tag#v}"
+
+      - name: リリースブランチを切って版を上げる
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --create "${BRANCH}"
+
+          # 共通の祖先が無いと、木の中身が同じでも merge は必ず拒まれる。
+          # テンプレートから「Include all branches」で作ったリポジトリがこの状態になる。
+          # 先に確かめて、原因の分かる形で止める
+          if ! git merge-base "origin/${MAIN_BRANCH}" HEAD >/dev/null 2>&1; then
+            echo "::error::${MAIN_BRANCH} と ${DEVELOP_BRANCH} に共通の祖先が無い。README の「履歴が繋がっていないとき」を見て直してから実行する"
+            exit 1
+          fi
+
+          # main の内容を先に取り込む。前のリリースの戻しが develop に入っていなくても、
+          # main への PR が package.json で衝突しないようにする。普段は何も変わらない
+          if ! git merge --no-edit "origin/${MAIN_BRANCH}"; then
+            # マージが始まる前に拒まれたときは MERGE_HEAD が無く、git merge --abort 自体が失敗する。
+            # 既定のシェルは bash -e なので、そのままだと下の案内が出ないまま落ちる
+            git merge --abort || true
+            echo "::error::${MAIN_BRANCH} と ${DEVELOP_BRANCH} が衝突する。先に ${MAIN_BRANCH} を ${DEVELOP_BRANCH} に取り込んでから実行する"
+            exit 1
+          fi
+
+          # package.json と package-lock.json の版を書き換える。タグはまだ打たない
+          npm version "${VERSION}" --no-git-tag-version
+          actual="$(node -p "require('./package.json').version")"
+          if [ "${actual}" != "${VERSION}" ]; then
+            echo "::error::package.json の版が ${VERSION} にならなかった（${actual}）"
+            exit 1
+          fi
+
+      - name: 検査を通す
+        # 壊れたものをリリースブランチに載せない。
+        # GITHUB_TOKEN が開いた PR の CI は「承認待ち」で作られ、人が承認するまで動かないため、ここで検査しておく
+        run: npm run lint
+
+      - name: コミットして押す
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          git add package.json package-lock.json
+          git commit -m "版を ${VERSION} に上げる"
+          git push --set-upstream origin "${BRANCH}"
+
+      - name: リリースノートの下書きを作る
+        # タグはまだ無いが、generate-notes は新しいタグ名でも受け付ける
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            --method POST \
+            -f tag_name="${TAG}" \
+            -f target_commitish="${BRANCH}" \
+            --jq '.body' > notes.md \
+            || { echo "::warning::リリースノートの下書きを作れなかった"; : > notes.md; }
+
+      - name: PRを開く
+        id: pr
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          {
+            echo "\`${DEVELOP_BRANCH}\` の内容を ${TAG} としてリリースします。"
+            echo
+            echo "**マージコミット（Create a merge commit）でマージしてください。** squash や rebase は使いません。"
+            echo
+            echo "この PR をマージすると「リリースを公開する」ワークフローが動き、次を行います。"
+            echo
+            echo "1. タグ \`${TAG}\` を打ちます"
+            echo "1. GitHub Release を作ります"
+            echo "1. \`${MAIN_BRANCH}\` を \`${DEVELOP_BRANCH}\` に戻します"
+            echo
+            echo "検査（\`npm run lint\`）はワークフローの中で済んでいます。"
+            echo "この PR の CI は「承認待ち」で作られます。結果を PR に出したいときは「Approve workflows to run」を押してください。"
+            echo
+            echo "## 変更の一覧（下書き）"
+            echo
+            cat notes.md
+          } > body.md
+
+          url="$(gh pr create \
+            --base "${MAIN_BRANCH}" \
+            --head "${BRANCH}" \
+            --title "リリース ${TAG}" \
+            --body-file body.md)"
+          number="${url##*/}"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+          # GITHUB_TOKEN が開いた PR ではラベラーが動かないため、ここで付ける。
+          # ラベルが無いリポジトリでも PR は開けるようにする
+          gh pr edit "${number}" --add-label 'リリース' \
+            || echo "::warning::ラベル「リリース」を付けられなかった。.github/labels.yml の同期が済んでいるか確かめる"
+
+          {
+            echo "## リリース ${TAG}"
+            echo
+            echo "- PR: ${url}"
+            echo "- ブランチ: \`${BRANCH}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  merge:
+    name: PRをマージする
+    if: inputs.auto_merge
+    needs: prepare
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: GitHub CLIがあることを確かめる
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "::error::gh（GitHub CLI）が無い。ランナーに入れてから実行する: https://cli.github.com/"
+            exit 1
+          fi
+
+      - name: PRをマージする
+        # マージコミットで取り込む。
+        # main のルール（必須のチェックや承認）で止められた場合はここで失敗する。
+        # その場合は人が PR をマージすれば、release-publish.yml が pull_request(closed) で動いて公開まで進む
+        env:
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          PR_URL: ${{ needs.prepare.outputs.pr_url }}
+        run: |
+          if ! gh pr merge "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --merge --delete-branch; then
+            echo "::error::PR をマージできなかった。main のルール（必須のチェックや承認）で止められている。人が PR をマージすれば、「リリースを公開する」が動いて公開まで進む: ${PR_URL}"
+            exit 1
+          fi
+
+  publish:
+    name: タグとGitHub Releaseを作る
+    # GITHUB_TOKEN でマージしても pull_request(closed) のワークフローは動かないため、ここから呼ぶ
+    if: inputs.auto_merge
+    needs: [prepare, merge]
+    # GitHub の $/ 構文（自リポジトリ参照）は actionlint 1.7.12 がまだ理解しないため、./ のままにする
+    uses: ./.github/workflows/release-publish.yml # zizmor: ignore[self-repository] actionlint が $/ に未対応
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      version: ${{ needs.prepare.outputs.version }}

@@ -1,0 +1,75 @@
+# Issue と PR のラベル。
+# 「ラベルを同期する」ワークフロー（.github/workflows/labels.yml）がこの内容にリポジトリのラベルを揃える。
+# ここに無いラベルは消される。ラベルを足すときや変えるときは、GitHub の画面ではなくこのファイルを変える。
+# ただし from_name に書いた名前のラベルは消されない（改名の元として扱われる）。
+#
+# from_name は、GitHub が最初から用意する英語のラベルを、付いている Issue や PR を保ったまま改名するためのもの。
+# Dependabot の labels に書くラベルはここで作っておく。Dependabot は無いラベルを作らず、黙って無視する。
+
+# ---- 種類。バグ・機能追加・質問は Issue フォームが付け、ドキュメントはラベラーが付ける。残りは人が付ける
+- name: バグ
+  from_name: bug
+  color: '#d73a4a'
+  description: 期待どおりに動かない
+- name: 機能追加
+  from_name: enhancement
+  color: '#a2eeef'
+  description: 新しい機能や改善の要望
+- name: ドキュメント
+  from_name: documentation
+  color: '#0075ca'
+  description: 文書の追加や修正
+- name: 質問
+  from_name: question
+  color: '#d876e3'
+  description: 使い方や仕様についての質問
+- name: アクセシビリティ
+  from_name: accessibility
+  color: '#f143ab'
+  description: 障害のある人の利用を妨げるもの
+
+# ---- 状態。人が付ける
+- name: 重複
+  from_name: duplicate
+  color: '#cfd3d7'
+  description: すでにあるIssueやPRと同じ内容
+- name: 無効
+  from_name: invalid
+  color: '#e4e669'
+  description: 内容が正しくない、または対象外
+- name: 対応しない
+  from_name: wontfix
+  color: '#ffffff'
+  description: 対応しないと判断したもの
+- name: 初心者向け
+  from_name: good first issue
+  color: '#7057ff'
+  description: はじめて貢献する人に向く課題
+- name: 助けが必要
+  from_name: help wanted
+  color: '#008672'
+  description: 手を貸してほしい課題
+
+# ---- 自動で付く。Dependabot、PR のラベラー、リリースのワークフローが付ける。
+# 破壊的変更だけは、PR を確認した人が付ける
+- name: 依存関係
+  from_name: dependencies
+  color: '#0366d6'
+  description: 依存パッケージやアクションの更新
+- name: npm
+  from_name: javascript
+  color: '#2c375d'
+  description: npmパッケージの更新
+- name: GitHub Actions
+  from_name: github_actions
+  color: '#2088ff'
+  description: GitHub Actionsの更新
+- name: リリース
+  color: '#5a6e59'
+  description: リリースの準備と公開
+- name: セキュリティ
+  color: '#69020b'
+  description: 脆弱性やセキュリティに関わる修正
+- name: 破壊的変更
+  color: '#303037'
+  description: 後方互換性を壊す変更。リリースノートで独立した見出しになる

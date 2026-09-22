@@ -1,0 +1,54 @@
+name: ラベルを同期する
+
+# .github/labels.yml の内容に、リポジトリのラベルを揃える。
+# ファイルに無いラベルは消える。既定の英語のラベルは from_name で日本語のラベルに改名される。
+#
+# テンプレートから作った直後は、最初の PR を開く前に一度動かしておく。scripts/setup.sh が起動する。
+# 起動に失敗したときは、Actions の画面から手で実行する。
+# Issue フォームと Dependabot が指定するラベルは、この同期が済んでいないと付かない。
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - .github/labels.yml
+      - .github/workflows/labels.yml
+  # PR では変更の内容を確かめるだけで、適用はしない
+  pull_request:
+    paths:
+      - .github/labels.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: ラベルを揃える
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write   # ラベルの作成、変更、削除に要る
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # labels.yml を読むだけなので、認証情報は残さない
+          persist-credentials: false
+
+      - name: ラベルを揃える
+        uses: crazy-max/ghaction-github-labeler@548a7c3603594ec17c819e1239f281a3b801ab4d # v6.0.0
+        with:
+          yaml-file: .github/labels.yml
+          # ファイルに無いラベルは消す。画面で作ったラベルも消えるため、ラベルは必ずファイルに書く。
+          # ただし main からの同期では消さない。GitFlow では main の labels.yml が develop より古い期間があり、
+          # develop で足したラベルを main 側の同期が消してしまうためである
+          skip-delete: ${{ github.ref_name == 'main' }}
+          # PR では何が変わるかを表示するだけにする
+          dry-run: ${{ github.event_name == 'pull_request' }}

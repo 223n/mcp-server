@@ -1,0 +1,12 @@
+// markdownlint-cli2 が検査する対象。規則そのものは共有設定 @223n/lint-config-ja にある。
+//
+// 規則を1つだけ変えたいときは、extends と同じ階層に書く。
+// 同じ設定の中に書いた規則は extends で読んだものより優先される。
+//   "MD033": { "allowed_elements": ["br"] }
+{
+  "config": {
+    "extends": "@223n/lint-config-ja/config/markdownlint.jsonc"
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**"]
+}

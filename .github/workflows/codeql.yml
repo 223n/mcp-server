@@ -1,0 +1,63 @@
+name: CodeQL
+
+# ワークフローの安全性を CodeQL で走査する（言語: actions）。
+# 結果は「Security」→「Code scanning」に出る。
+# develop のルール「Require code scanning results」は、この走査の結果で満たされる。
+#
+# 注意: Settings の Code scanning で「Default setup」を有効にしていると、
+# このワークフロー（advanced setup）の結果は受け付けられない。Default setup は使わない。
+#
+# ソースコードを持つリポジトリでは、matrix の language に言語を足す（例: javascript-typescript、python）。
+# 対応する言語は https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning にある。
+# PHP は対応していないため、PHP のリポジトリではワークフローの走査だけになる。
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # 毎週月曜の朝（日本時間 9:00）。CodeQL の規則が更新されたときに新しい指摘を拾う
+    - cron: '0 0 * * 1'
+  # 手で動かすため。pull_request の実行が作られなかったブランチを走査したいときに使う
+  workflow_dispatch:
+
+# 同じブランチに続けて push したとき、古い実行を止める
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL（${{ matrix.language }}）
+    # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
+    # 無ければ GitHub がホストする ubuntu-latest で動く
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    permissions:
+      security-events: write   # 結果を Code scanning に送る
+      actions: read            # 非公開リポジトリで、ワークフローの情報を読むのに要る
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions]
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 走査だけなので、認証情報は残さない
+          persist-credentials: false
+
+      - name: CodeQLを初期化する
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          # コンパイルが要る言語（C/C++、Java など）を足したときは build-mode を設定する
+
+      - name: 走査する
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}

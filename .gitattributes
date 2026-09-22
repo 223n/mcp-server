@@ -1,0 +1,13 @@
+# 改行コードは LF に統一する
+* text=auto eol=lf
+
+*.md text
+*.js text
+*.mjs text
+*.cjs text
+*.json text
+*.jsonc text
+*.yml text
+*.yaml text
+*.sh text
+*.ps1 text

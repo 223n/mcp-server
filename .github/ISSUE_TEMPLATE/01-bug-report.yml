@@ -1,0 +1,81 @@
+# バグ報告のフォーム。
+# 参考: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+#
+# labels に書くラベルはリポジトリに無ければ付かない。.github/labels.yml で定義してある。
+# 各要素の id は ASCII で付ける。日本語の label だけだと参照名が同じになり、フォームが壊れることがある。
+# validations.required は公開リポジトリでだけ効く。
+name: バグ報告
+description: 期待どおりに動かないことを報告します
+title: '[バグ] '
+labels:
+  - バグ
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。
+        同じ内容のIssueが無いか、先に検索してください。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 起きたこと
+      description: 何が起きたかを具体的に書いてください。
+      placeholder: 例：保存すると内容が消える
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待したこと
+      description: 本来どう動くべきかを書いてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現の手順
+      description: 手順を順番に書いてください。
+      value: |
+        1.
+        1.
+        1.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版
+      description: 問題が起きた版、タグ、またはコミットです。
+      placeholder: 例：v1.2.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境
+      description: OS、ブラウザ、実行環境の版などです。
+      value: |
+        - OS:
+        - ブラウザ:
+        - その他:
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログやエラーの出力
+      description: そのまま貼り付けてください。自動でコードブロックになります。
+      render: text
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 確認したこと
+      options:
+        - label: 同じ内容のIssueが無いことを確かめました
+          required: true
+        - label: 最新の版でも起きることを確かめました

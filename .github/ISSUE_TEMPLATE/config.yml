@@ -1,0 +1,13 @@
+# Issue を作るときの選択画面の設定。
+# 参考: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+# 空の Issue は隠す。書き込み権限のある人には「Maintainers only」として残る
+blank_issues_enabled: false
+
+# フォームの外へ案内する先。url は絶対 URL で書く。
+# テンプレートから作ったリポジトリでは 223n/repo_template を自分のリポジトリに書き換える。
+# 脆弱性の報告先は Settings > Advanced Security で Private vulnerability reporting を有効にしないと使えない
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/223n/repo_template/security/advisories/new
+    about: セキュリティに関わる問題は Issue に書かず、非公開で報告してください。
