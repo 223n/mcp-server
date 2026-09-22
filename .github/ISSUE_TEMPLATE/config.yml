@@ -9,5 +9,5 @@ blank_issues_enabled: false
 # 脆弱性の報告先は Settings > Advanced Security で Private vulnerability reporting を有効にしないと使えない
 contact_links:
   - name: 脆弱性の報告
-    url: https://github.com/223n/repo_template/security/advisories/new
+    url: https://github.com/223n/mcp-server/security/advisories/new
     about: セキュリティに関わる問題は Issue に書かず、非公開で報告してください。

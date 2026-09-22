@@ -2,7 +2,7 @@
 
 このリポジトリで作業するときの決まりです。
 Claude Codeがこのファイルを読みます。
-人が読む手引きは[CONTRIBUTING.md](CONTRIBUTING.md)と[README.md](README.md)にあります。
+人が読む手引きは[CONTRIBUTING.md](CONTRIBUTING.md)、[README.md](README.md)、[docs/repository-operations.md](docs/repository-operations.md)にあります。
 
 ## mainとdevelopをPull Requestのheadにしない
 
@@ -82,7 +82,16 @@ gh api --method POST "repos/OWNER/REPO/git/refs" -f "ref=refs/heads/develop" -f 
 ## そのほかの決まり
 
 - ブランチの運用と文書の書き方は[CONTRIBUTING.md](CONTRIBUTING.md)にあります
-- リリースの手順は[README.md](README.md)の「ブランチとリリース」にあります
+- リリースの手順は[docs/repository-operations.md](docs/repository-operations.md)の「ブランチとリリース」にあります
 - `scripts/setup.sh`と`scripts/setup.ps1`は同じことを行います。片方だけを変えないでください
 - Pull Requestはマージコミット（Create a merge commit）でマージします
 - 変更したら`npm run lint`を通します
+
+## このサーバーの決まり
+
+- stdioで動くとき、標準出力はMCPの通信路です。ログは`console.error`で標準エラーに出します。`console.log`を足すと通信が壊れます
+- `.env`はコミットしません。`.gitignore`で外しています
+- `src/tools/files.js`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
+- 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、文書の検査の道具は`devDependencies`に入れます
+- 変えたあとは`docker compose up -d --build`で作り直し、`curl.exe http://127.0.0.1:3000/healthz`と、stdioの`initialize`の応答を確かめます
+- ツールの名前（`ollama_chat`など）は変えないでください。Claudeの側の許可（`mcp__ollama__*`）とサブエージェントの定義が名前を使っています

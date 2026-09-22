@@ -1,0 +1,45 @@
+services:
+  ollama-mcp:
+    build: .
+
+    container_name: ollama-mcp
+
+    init: true
+
+    restart: unless-stopped
+
+    # 公開はこの PC 内（127.0.0.1）に限定。外部からは Cloudflare Tunnel 経由のみ
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    # .env は値の差し込みにだけ使い、サーバーが使う変数だけを渡す
+    # （.env の他の値、たとえば Cloudflare の Service Token をコンテナに入れない）
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-nucbox-fast:latest}
+      DEEP_MODEL: ${DEEP_MODEL:-qwen2.5-coder:14b}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300000}
+      OLLAMA_MAX_DURATION: ${OLLAMA_MAX_DURATION:-900000}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech}
+      HTTP_ALLOW_FILES: ${HTTP_ALLOW_FILES:-false}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      # ファイルを渡すツール用（ホスト側パス=コンテナ内パス）。stdio 接続のときだけ使われる
+      FILE_ROOTS: 'C:\dev=/work/dev;C:\docker=/work/docker'
+
+    volumes:
+      - C:/dev:/work/dev:ro
+      - C:/docker:/work/docker:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
