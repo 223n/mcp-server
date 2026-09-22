@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node index.js",
     "stdio": "node stdio.js",
+    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
     "lint": "npm run lint:md && npm run lint:ja",
     "lint:md": "markdownlint-cli2",
     "lint:md:fix": "markdownlint-cli2 --fix",
