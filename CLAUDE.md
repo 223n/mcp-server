@@ -93,5 +93,8 @@ gh api --method POST "repos/OWNER/REPO/git/refs" -f "ref=refs/heads/develop" -f 
 - `.env`はコミットしません。`.gitignore`で外しています
 - `src/tools/files.js`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
 - 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、文書の検査の道具は`devDependencies`に入れます
+- サーバーを変えたら`npm test`を通します。Ollamaの代わりに`test/helpers/mock-ollama.js`を使うため、GPUは要りません。振る舞いを足したら試験も足します
+- 試験の中でサーバーを起動するときは、作業ディレクトリを一時ディレクトリにします。手元の`.env`を読ませないためです
 - 変えたあとは`docker compose up -d --build`で作り直し、`curl.exe http://127.0.0.1:3000/healthz`と、stdioの`initialize`の応答を確かめます
+- HTTPでファイルを読めるのは、認証を設定したときだけです。この条件（`src/config/config.js`の`httpAllowFiles`）を外さないでください
 - ツールの名前（`ollama_chat`など）は変えないでください。Claudeの側の許可（`mcp__ollama__*`）とサブエージェントの定義が名前を使っています
