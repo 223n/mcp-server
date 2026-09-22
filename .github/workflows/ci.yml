@@ -135,6 +135,11 @@ jobs:
     name: Dockerイメージの確認
     runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 15
+    env:
+      # セルフホストのランナーで他の実行とぶつからないよう、名前は実行ごとに変える。
+      # ホストのポートは使わず、確かめるのもコンテナーの中から行う
+      CONTAINER: mcp-server-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE: mcp-server:ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,38 +147,40 @@ jobs:
           persist-credentials: false
 
       - name: イメージを作る
-        run: docker build --tag mcp-server:ci .
+        run: docker build --tag "${IMAGE}" .
 
       - name: 起動して応答を確かめる
         run: |
-          docker run --detach --name mcp-server-ci --publish 127.0.0.1:3000:3000 mcp-server:ci
+          docker run --detach --name "${CONTAINER}" "${IMAGE}"
 
           for _ in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:3000/healthz; then
+            if docker exec "${CONTAINER}" wget -qO- http://127.0.0.1:3000/healthz; then
               break
             fi
             sleep 1
           done
-          curl --fail --silent --show-error http://127.0.0.1:3000/healthz
+          docker exec "${CONTAINER}" wget -qO- http://127.0.0.1:3000/healthz
 
           initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
 
           # 応答はいったん変数に受ける。grep を直につなぐと、先に終わった grep で書き手が SIGPIPE になり、
           # pipefail でジョブが落ちることがあるため
-          http_response=$(curl --fail --silent --show-error -X POST http://127.0.0.1:3000/mcp \
-            -H 'Content-Type: application/json' \
-            -H 'Accept: application/json, text/event-stream' \
-            -d "${initialize}")
+          http_response=$(docker exec "${CONTAINER}" wget -qO- \
+            --header 'Content-Type: application/json' \
+            --header 'Accept: application/json, text/event-stream' \
+            --post-data "${initialize}" \
+            http://127.0.0.1:3000/mcp)
           echo "HTTP: ${http_response}"
           grep --quiet '"serverInfo"' <<< "${http_response}"
 
           # stdio は stdin を閉じると終わるため、応答を待つ間は開いておく
-          stdio_response=$({ echo "${initialize}"; sleep 3; } | docker exec -i mcp-server-ci node stdio.js)
+          stdio_response=$({ echo "${initialize}"; sleep 3; } | docker exec -i "${CONTAINER}" node stdio.js)
           echo "stdio: ${stdio_response}"
           grep --quiet '"serverInfo"' <<< "${stdio_response}"
 
-      - name: ログを出す
+      - name: ログを出して片付ける
         if: always()
         run: |
-          docker logs mcp-server-ci || true
-          docker rm --force mcp-server-ci || true
+          docker logs "${CONTAINER}" || true
+          docker rm --force "${CONTAINER}" || true
+          docker image rm "${IMAGE}" || true
