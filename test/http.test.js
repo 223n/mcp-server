@@ -181,6 +181,10 @@ describe("認証なしの HTTP", () => {
     assert.match(await unknownMethod.text(), /-32601/);
   });
 
+  test("既定では 3060 秒までのリクエストを受け付ける", async () => {
+    assert.match(server.output(), /\[http\] request timeout: 3060 s/);
+  });
+
   test("許可していない Host と Origin は 403", async () => {
     const response = await fetch(`${server.url}/mcp`, {
       method: "POST",
@@ -523,6 +527,12 @@ describe("タイムアウト", () => {
     await server.stop();
 
     await ollama.close();
+  });
+
+  test("Node の既定より長いリクエストを切らないようにしている", async () => {
+    // Node の requestTimeout は既定で 300 秒。これを上げないと、
+    // OLLAMA_MAX_DURATION をいくら大きくしても 300 秒で 408 になる
+    assert.match(server.output(), /\[http\] request timeout: 61 s/);
   });
 
   test("途中まで生成された部分を警告付きで返す", async () => {

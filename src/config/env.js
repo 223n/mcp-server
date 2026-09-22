@@ -48,8 +48,10 @@ export const env = {
   // Ollama から何も届かない状態の上限。キュー待ち、モデル読み込み、プロンプト評価の時間も含む
   OLLAMA_TIMEOUT: toInt("OLLAMA_TIMEOUT", 300000, 1000, MAX_TIMER_MS),
 
-  // 1 回の生成全体の上限
-  OLLAMA_MAX_DURATION: toInt("OLLAMA_MAX_DURATION", 900000, 1000, MAX_TIMER_MS),
+  // 1 回の生成全体の上限。
+  // 14B に大きな入力を渡すと 10 分を超えることがあるため、既定を 3000 秒にしている。
+  // 無通信の上限（OLLAMA_TIMEOUT）は 300 秒のままなので、Ollama が固まったときは早く気付ける
+  OLLAMA_MAX_DURATION: toInt("OLLAMA_MAX_DURATION", 3000000, 1000, MAX_TIMER_MS),
 
   PORT: toInt("PORT", 3000, 1, 65535),
 

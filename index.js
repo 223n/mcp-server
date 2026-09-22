@@ -190,6 +190,16 @@ const httpServer = root.listen(config.port, config.host, () => {
   console.log(`ollama-mcp listening on http://${config.host}:${config.port}/mcp`);
 });
 
+// Node の既定（300 秒）のままだと、長い生成が 408 で切られる。
+// headersTimeout は requestTimeout より短くしておく必要がある
+httpServer.requestTimeout = config.httpRequestTimeout;
+
+httpServer.headersTimeout = Math.min(60000, config.httpRequestTimeout - 1000);
+
+console.log(
+  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (OLLAMA_MAX_DURATION + 60 s)`,
+);
+
 let stopping = false;
 
 async function shutdown() {
