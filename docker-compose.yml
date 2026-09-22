@@ -25,7 +25,9 @@ services:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
-      # ファイルを渡すツール用（ホスト側パス=コンテナ内パス）。stdio 接続のときだけ使われる
+      CF_ACCESS_ALLOWED_EMAILS: ${CF_ACCESS_ALLOWED_EMAILS:-}
+      # ファイルを渡すツール用（ホスト側パス=コンテナー内パス）。
+      # stdio と、HTTP_ALLOW_FILES=true かつ認証を設定した HTTP で使われる
       FILE_ROOTS: 'C:\dev=/work/dev;C:\docker=/work/docker'
 
     volumes:

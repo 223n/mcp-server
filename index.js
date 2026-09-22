@@ -89,10 +89,21 @@ if (auth) {
   );
 }
 
+if (config.cfAccessTeamDomain && config.cfAccessAud) {
+  // 設定がコンテナーに届いているかを確かめられるよう、件数だけを出す（アドレスは出さない）
+  console.log(
+    config.cfAccessAllowedEmails.length > 0
+      ? `[auth] Cloudflare Access JWT required; CF_ACCESS_ALLOWED_EMAILS has ${config.cfAccessAllowedEmails.length} address(es)`
+      : "[auth] Cloudflare Access JWT required; any identity the Access policy admits is accepted (CF_ACCESS_ALLOWED_EMAILS is empty)",
+  );
+}
+
 if (config.httpAllowFilesRequested && !config.httpAllowFiles) {
   console.warn(
     "[files] HTTP_ALLOW_FILES=true is ignored because HTTP has no authentication. File tools stay disabled over HTTP.",
   );
+} else if (config.httpAllowFiles && config.fileRoots.length === 0) {
+  console.warn("[files] HTTP_ALLOW_FILES=true but FILE_ROOTS is empty, so there are no file tools.");
 } else if (config.httpAllowFiles) {
   console.warn("[files] File tools are enabled over HTTP (authenticated requests only).");
 }
