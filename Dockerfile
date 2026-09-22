@@ -1,4 +1,5 @@
-FROM node:26-alpine
+# 版は固定し、Dependabot が更新を提案する
+FROM node:26.9.0-alpine3.24
 
 ENV NODE_ENV=production
 

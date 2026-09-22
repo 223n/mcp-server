@@ -1,10 +1,12 @@
 name: CI
 
-# 3つの検査をする。
+# 5つの検査をする。
 #   lint-ja         文書の書式（markdownlint）と日本語の書き方（textlint）。
 #                   規則は公開されている共有設定 @223n/lint-config-ja にあり、ここには「何を検査するか」だけを書く
 #   lint-workflows  ワークフローの構文と型（actionlint）
 #   zizmor          ワークフローの安全性（zizmor）。アクションの SHA 固定、権限、危険な書き方を見る
+#   test            サーバーの試験（npm test）。Node 22 と 26 で動かす
+#   docker          Docker イメージを作り、起動して HTTP と stdio の応答を確かめる
 #
 # プロジェクト固有のビルドやテストは、これらと並ぶジョブとして足す。
 on:
@@ -99,3 +101,79 @@ jobs:
         with:
           version: v1.30.0
           advanced-security: false
+
+  test:
+    name: サーバーの試験
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    strategy:
+      # 片方の版で落ちても、もう片方の結果を見られるようにする
+      fail-fast: false
+      matrix:
+        # 22 は package.json の engines の下限、26 は Dockerfile の版
+        node-version: ['22', '26']
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Nodeを用意
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: 試験する
+        # Ollama の代わりに試験用のサーバー（test/helpers/mock-ollama.js）を使うため、GPU は要らない
+        run: npm test
+
+  docker:
+    name: Dockerイメージの確認
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: イメージを作る
+        run: docker build --tag mcp-server:ci .
+
+      - name: 起動して応答を確かめる
+        run: |
+          docker run --detach --name mcp-server-ci --publish 127.0.0.1:3000:3000 mcp-server:ci
+
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/healthz; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent --show-error http://127.0.0.1:3000/healthz
+
+          initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+
+          # 応答はいったん変数に受ける。grep を直につなぐと、先に終わった grep で書き手が SIGPIPE になり、
+          # pipefail でジョブが落ちることがあるため
+          http_response=$(curl --fail --silent --show-error -X POST http://127.0.0.1:3000/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d "${initialize}")
+          echo "HTTP: ${http_response}"
+          grep --quiet '"serverInfo"' <<< "${http_response}"
+
+          # stdio は stdin を閉じると終わるため、応答を待つ間は開いておく
+          stdio_response=$({ echo "${initialize}"; sleep 3; } | docker exec -i mcp-server-ci node stdio.js)
+          echo "stdio: ${stdio_response}"
+          grep --quiet '"serverInfo"' <<< "${stdio_response}"
+
+      - name: ログを出す
+        if: always()
+        run: |
+          docker logs mcp-server-ci || true
+          docker rm --force mcp-server-ci || true

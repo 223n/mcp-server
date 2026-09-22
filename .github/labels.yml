@@ -64,6 +64,10 @@
   from_name: github_actions
   color: '#2088ff'
   description: GitHub Actionsの更新
+- name: Docker
+  from_name: docker
+  color: '#1d63ed'
+  description: Dockerのイメージや設定の更新
 - name: リリース
   color: '#5a6e59'
   description: リリースの準備と公開
