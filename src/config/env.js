@@ -48,8 +48,16 @@ export const env = {
   // Ollama から何も届かない状態の上限。キュー待ち、モデル読み込み、プロンプト評価の時間も含む
   OLLAMA_TIMEOUT: toInt("OLLAMA_TIMEOUT", 300000, 1000, MAX_TIMER_MS),
 
-  // 1 回の生成全体の上限
-  OLLAMA_MAX_DURATION: toInt("OLLAMA_MAX_DURATION", 900000, 1000, MAX_TIMER_MS),
+  // 1 回の生成全体の上限。
+  // 14B に大きな入力を渡すと 10 分を超えることがあるため、既定を 3000 秒にしている。
+  // 無通信の上限（OLLAMA_TIMEOUT）は 300 秒のままなので、Ollama が固まったときは早く気付ける
+  OLLAMA_MAX_DURATION: toInt("OLLAMA_MAX_DURATION", 3000000, 1000, MAX_TIMER_MS),
+
+  // 同時に走らせる生成の数と、待ち行列の長さの上限。
+  // Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
+  OLLAMA_MAX_CONCURRENCY: toInt("OLLAMA_MAX_CONCURRENCY", 2, 1, 64),
+
+  OLLAMA_MAX_QUEUE: toInt("OLLAMA_MAX_QUEUE", 8, 0, 1000),
 
   PORT: toInt("PORT", 3000, 1, 65535),
 
@@ -64,6 +72,44 @@ export const env = {
   FILE_ROOTS: process.env.FILE_ROOTS || "",
 
   HTTP_ALLOW_FILES: process.env.HTTP_ALLOW_FILES === "true",
+
+  // ローカルのモデルの出力を書き出す先（ホスト側パス=コンテナー内パス）。1 つだけ。
+  // 設定したときだけ save_output が使えるようになる。読み込みの許可ルートとは別に持つ
+  OUTPUT_DIR: process.env.OUTPUT_DIR || "",
+
+  // HTTP でも書き出しを許すかどうか。HTTP_ALLOW_FILES とは別に持ち、
+  // 読み込みを許しただけの設定が、更新で黙って書き込みに広がらないようにする
+  HTTP_ALLOW_WRITES: process.env.HTTP_ALLOW_WRITES === "true",
+
+  // リポジトリを取得する先（ホスト側パス=コンテナー内パス）。1 つだけ。
+  // サーバーが書き換えてよいのはここの配下だけで、FILE_ROOTS には書かない
+  CLONE_ROOT: process.env.CLONE_ROOT || "",
+
+  // 取得してよい GitHub の owner（カンマ区切り）。空なら取得そのものを拒む
+  GIT_ALLOWED_OWNERS: toList(process.env.GIT_ALLOWED_OWNERS || ""),
+
+  // 作業ツリーと履歴を変える操作（commit、push、ブランチの作成）を許すかどうか。
+  // 既定は false。HTTP では、この値に関わらず恒久的に使えない
+  GIT_ALLOW_WRITE: process.env.GIT_ALLOW_WRITE === "true",
+
+  // GitHub の API に使うトークン。fine-grained を想定する。
+  // 名前を GITHUB_TOKEN にしないのは、CI やシェルにたまたま存在することが多く、
+  // ホストで直に起動したときに無関係のトークンで GitHub のツールが有効になるため
+  GITHUB_MCP_TOKEN: process.env.GITHUB_MCP_TOKEN || "",
+
+  // GitHub 側を変える操作（PR の作成、コメント）を許すかどうか。
+  // 既定は false。HTTP では、この値に関わらず恒久的に使えない
+  GITHUB_ALLOW_WRITE: process.env.GITHUB_ALLOW_WRITE === "true",
+
+  // git の子プロセスが何も出さない状態の上限と、1 回の操作全体の上限
+  GIT_TIMEOUT: toInt("GIT_TIMEOUT", 120000, 1000, MAX_TIMER_MS),
+
+  GIT_MAX_DURATION: toInt("GIT_MAX_DURATION", 600000, 1000, MAX_TIMER_MS),
+
+  // commit に使う名前とメールアドレス
+  GIT_USER_NAME: process.env.GIT_USER_NAME || "",
+
+  GIT_USER_EMAIL: process.env.GIT_USER_EMAIL || "",
 
   // HTTP の認証。どちらかを設定すると、満たさないリクエストは 401 になる
   MCP_AUTH_TOKEN: process.env.MCP_AUTH_TOKEN || "",

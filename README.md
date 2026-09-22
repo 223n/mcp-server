@@ -6,10 +6,10 @@
 入口は次の2つです。
 どちらもMCPの2026-07-28版（`server/discover`）と2025年版（`initialize`）の両方に応答します。
 
-| 入口                                               | 用途                                                              | ファイルの読み込み                                          |
-|----------------------------------------------------|-------------------------------------------------------------------|-------------------------------------------------------------|
-| stdio（`docker exec -i ollama-mcp node stdio.js`） | 同じPCのClaude CodeとClaude Desktopから使います。こちらを勧めます | 使えます（`FILE_ROOTS`の配下だけ）                          |
-| HTTP（`POST /mcp`、ポート3000）                    | Cloudflare Tunnelを通して、claude.aiなどから使います              | `HTTP_ALLOW_FILES=true`と認証を両方設定したときだけ使えます |
+| 入口                                               | 用途                                                              | ファイルの読み込み                                          | 出力の保存                                                   |
+|----------------------------------------------------|-------------------------------------------------------------------|-------------------------------------------------------------|--------------------------------------------------------------|
+| stdio（`docker exec -i ollama-mcp node stdio.js`） | 同じPCのClaude CodeとClaude Desktopから使います。こちらを勧めます | 使えます（`FILE_ROOTS`の配下だけ）                          | `OUTPUT_DIR`を設定したときだけ使えます                       |
+| HTTP（`POST /mcp`、ポート3000）                    | Cloudflare Tunnelを通して、claude.aiなどから使います              | `HTTP_ALLOW_FILES=true`と認証を両方設定したときだけ使えます | `HTTP_ALLOW_WRITES=true`と認証と`OUTPUT_DIR`が要ります       |
 
 ## 構成
 
@@ -35,8 +35,22 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 | `ollama_list_models`   | 入っているモデルの一覧を返します                                                                                          | -               |
 | `ollama_health`        | Ollamaが動いているかと、サーバーの設定を返します                                                                          | -               |
 | `list_files`           | 許可ルートの中のファイルとディレクトリを一覧します。`files`に渡すパスを探すときに使います。ファイルを扱えるときだけ出ます | -               |
+| `read_file`            | 1つのファイルを、ローカルのモデルに渡さずにそのまま読みます。`save_output`で書いた結果を読み返すときに使います。ファイルを扱えるときだけ出ます | -               |
+| `git_clone`            | GitHubのリポジトリを`CLONE_ROOT`の配下に取得します。`owner/repo`だけを受け、URLは受けません。`CLONE_ROOT`を設定したときだけ出ます | -               |
+| `git_read`             | 取得したリポジトリの状態を読みます。`status`、`log`、`diff`、`show`、`branches`、`remotes`です | -               |
+| `git_write`            | ブランチの作成、staging、commit、pushです。`GIT_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
+| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
+| `github_write`         | Pull Requestの作成とコメントです。`GITHUB_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
 
 - ファイルを扱えるとき（stdioと、設定したHTTP）は、`files`引数にWindowsの絶対パスを渡すと、サーバーがファイルを読み込みます。Claudeはファイルの中身を引数として書き出さずに済むため、トークンを節約できます
+- `files`は、1つのパスのほかにグロブと行範囲も取ります
+  - グロブは`C:\dev\app\src\**\*.php`のように書きます。`list_files`で探してから渡す往復を省けます
+  - 行範囲は`C:\dev\app\src\Main.php#L10-200`のように末尾に付けます。GitHubの永続リンクと同じ書き方です。`#L10`は1行、`#L10-`は末尾までです
+  - ディレクトリをそのまま渡すことはできません。グロブの書き方を添えて拒みます
+- `inline_files`には、サーバーが読めないファイルの中身を`{"name": ..., "content": ...}`の形で渡します。許可ルートの外にあるファイルや、Claudeが別の環境で開いているファイルに使います
+  - これはトークンを節約しません。`content`の分はどちらにせよ払います。サーバーが読めるパスなら必ず`files`を使います
+- 渡せる量の上限は、文字数ではなくトークン数の目安で測ります。日本語のコメントが多いコードは1文字がほぼ1トークンになるためです
+  - 上限を超えた分は丸ごと落とし、落としたファイル名を応答とプロンプトの両方に書きます。黙って切りません
 - `list_files`は`pattern`にグロブを取ります。大文字と小文字は区別しません
   - `*`は直下、`**/*.php`は下の階層のPHPのファイル、`*.{js,ts}`は選択肢、末尾の`/`はディレクトリだけです
   - `**`でたどるのは`path`から8階層までです。それより深いときは、そのことを結果に書き添えます
@@ -83,7 +97,8 @@ claude mcp add --scope user ollama -- docker exec -i ollama-mcp node stdio.js
 Ollamaに作業を任せ、その結果をClaudeが確かめてから返すための指示です。
 
 ツールを呼ぶたびの確認を省く場合は、`%USERPROFILE%\.claude\settings.json`の`permissions.allow`に`mcp__ollama__*`を足します。
-どのツールもファイルを書き換えません。
+`OUTPUT_DIR`を設定しないかぎり、どのツールもファイルを書き換えません。
+設定したときに書くのは`OUTPUT_DIR`の配下だけで、読み込みのツールは何も書き換えません。
 
 ## 環境変数
 
@@ -96,15 +111,29 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `DEFAULT_MODEL`                          | `nucbox-fast:latest`                                           | `ollama_chat`の既定のモデルです                                                                                                                    |
 | `DEEP_MODEL`                             | `qwen2.5-coder:14b`                                            | コードの確認とエラーの解析の既定のモデルです                                                                                                       |
 | `OLLAMA_TIMEOUT`                         | `300000`                                                       | Ollamaから何も届かない状態の上限（ミリ秒）です。キューの待ち、モデルの読み込み、プロンプトの評価も含みます                                         |
-| `OLLAMA_MAX_DURATION`                    | `900000`                                                       | 1回の生成全体の上限（ミリ秒）です                                                                                                                  |
+| `OLLAMA_MAX_DURATION`                    | `3000000`                                                      | 1回の生成全体の上限（ミリ秒）です。HTTPの`requestTimeout`もこの値+60秒に合わせます                                                                 |
+| `OLLAMA_MAX_CONCURRENCY`                 | `2`                                                            | 同時に走らせる生成の数です。OllamaはGPUを1つずつ使うため、並べても全体は速くなりません                                                             |
+| `OLLAMA_MAX_QUEUE`                       | `8`                                                            | 待ち行列の長さの上限です。ここも一杯なら、待たせずにその場で断ります                                                                              |
 | `ALLOWED_HOSTS`                          | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です                                                                                                               |
 | `HTTP_ALLOW_FILES`                       | `false`                                                        | HTTPでもファイルの読み込みを許すかどうかです。認証（`MCP_AUTH_TOKEN`か`CF_ACCESS_*`）がないときは無視します                                        |
 | `MCP_AUTH_TOKEN`                         | なし                                                           | 設定すると、HTTPに`Authorization: Bearer <値>`を求めます                                                                                           |
 | `CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUD` | なし                                                           | 設定すると、HTTPにCloudflare AccessのJWT（`Cf-Access-Jwt-Assertion`）を求めます                                                                    |
 | `CF_ACCESS_ALLOWED_EMAILS`               | なし                                                           | 設定すると、AccessのJWTの`email`がこの一覧にある人だけを通します。カンマで区切って並べます。サービストークンのJWTには`email`がないため、拒まれます |
 | `FILE_ROOTS`                             | `docker-compose.yml`で設定                                     | `ホストのパス=コンテナのパス`を`;`で区切って並べます                                                                                               |
+| `OUTPUT_DIR`                             | なし                                                           | ローカルのモデルの出力を書き出す先です。`ホストのパス=コンテナのパス`を1件だけ書きます。設定したときだけ`save_output`が出ます                     |
+| `HTTP_ALLOW_WRITES`                      | `false`                                                        | HTTPでも書き出しを許すかどうかです。`HTTP_ALLOW_FILES`とは別に持ちます。認証がないときは無視します                                                 |
+| `CLONE_ROOT`                             | `docker-compose.yml`で設定                                     | リポジトリを取得する先です。`ホストのパス=コンテナのパス`を1件だけ書きます。サーバーが書き換えてよいのはここの配下だけです                         |
+| `GIT_ALLOWED_OWNERS`                     | `docker-compose.yml`で設定                                     | 取得してよいGitHubのownerです。カンマで区切って並べます。空なら取得そのものを拒みます                                                             |
+| `GIT_ALLOW_WRITE`                        | `false`                                                        | commitとpushを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                                             |
+| `GIT_TIMEOUT`、`GIT_MAX_DURATION`        | `120000`、`600000`                                             | gitから何も届かない状態の上限と、1回の操作全体の上限です（ミリ秒）                                                                                |
+| `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
+| `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
+| `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
+- Nodeの`requestTimeout`は既定で300秒です。これを上げないと、`OLLAMA_MAX_DURATION`をいくら大きくしてもHTTPは300秒で切ります。サーバーは`OLLAMA_MAX_DURATION`+60秒に合わせ、起動時に`[http] request timeout`として出します
+  - 無通信の上限（`OLLAMA_TIMEOUT`）は300秒のままです。全体の上限だけを延ばし、Ollamaが固まったときは早く気付けるようにしています
+  - 3000秒まで使えるのはstdioと、同じPCから直にHTTPを叩くときです。claude.aiのコネクタは約240秒、Cloudflareは無通信が約100秒で打ち切ります
 - `MCP_AUTH_TOKEN`と`CF_ACCESS_*`の両方を設定したときは、どちらかを満たせば通します
 - どちらも設定しないと、このPCのほかのコンテナーからも`host.docker.internal:3000`を通してHTTPを呼べます
 
@@ -150,6 +179,105 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - 大きなファイルを14Bのモデルに読ませると、1回の呼び出しの上限（約240秒）を超えることがあります。そのときは`DEFAULT_MODEL`の7Bのモデルを使うか、ファイルを分けます
 - コネクタが約240秒で打ち切ったときは、途中まで生成された部分も返りません。リモートで主に使うなら、`OLLAMA_MAX_DURATION`を`200000`ほどに下げると、打ち切られる前に途中までの結果を返せます。ただし、同じコンテナーのstdioにも効きます
 
+### 出力をファイルに保存する
+
+長い下書きや翻訳は、`save_output`でファイルに書き出せます。
+応答にはパスと先頭と末尾の抜粋だけが返るため、Claudeが全文を読まずに済みます。
+
+1. ホスト側に書き出し先のディレクトリを作ります。コンテナーの`node`ユーザーが書ける権限にします
+1. `.env`に`OUTPUT_DIR=C:\dev\ollama-out=/work/dev/ollama-out`のように書きます
+1. HTTPでも使うときは、認証を設定したうえで`HTTP_ALLOW_WRITES=true`を足します
+1. `docker compose up -d`でコンテナーを作り直します。`ollama_health`の`output saving`が`enabled`になれば有効です
+
+- ファイル名は`output_name`で指定します。使えるのは英数字と`_`と`-`だけで、`.`とパス区切りは拒みます
+- 拡張子はサーバーが`.md`に決めます。`.php`や`.js`をサーバーに書かせないためです
+- すでにあるファイルは上書きせず、`-2`、`-3`と後ろに足して新しく作ります
+- 書き出したファイルの先頭には、ローカルのモデルが書いたものだという断りが入ります
+- 書き出したファイルは`read_file`で読み返せます。`#L120-200`を付けると一部だけ読めます
+- ローカルのモデルは同じ行を繰り返して終わることがあります。末尾の重複を数え、疑わしいときは警告を付けます
+
+### MCPのリソースとして読む
+
+ファイルを扱えるときは、MCPの`resources`としても同じファイルを公開します。
+`resources/list`は許可ルートだけを返し、`resources/read`はディレクトリなら一覧を、ファイルなら中身を返します。
+
+- URIは`file:///C:/dev/app/src/Main.php`の形です。`#L10-200`を付けると行範囲になります
+- 防御は`files`引数とまったく同じ経路を通ります。許可ルートの外、`..`、秘密のファイル、シンボリックリンクは同じように拒みます
+- `resources/read`にはツール名がないため、`mcp__ollama__*`の許可の対象になりません。そのぶん、ファイルのツールと完全に同じ条件でだけ公開します
+- `resources/subscribe`とページングには対応していません。一覧は許可ルートだけに絞っています
+
+### リポジトリを取得してgitとGitHubを操作する
+
+`CLONE_ROOT`を設定すると、GitHubのリポジトリを取得して、そのままローカルのモデルにレビューさせられます。
+
+1. ホスト側に取得先のディレクトリを作ります（例:`C:\dev\claude`）
+1. `.env`に`CLONE_ROOT`と`GIT_ALLOWED_OWNERS`を書きます
+1. privateのリポジトリを扱うときは、fine-grainedのトークンを`GITHUB_MCP_TOKEN`に書きます。対象のリポジトリは列挙して絞ります
+1. commitとpushまで任せるときは、`GIT_ALLOW_WRITE=true`、`GIT_USER_NAME`、`GIT_USER_EMAIL`を足します
+1. Pull Requestの作成まで任せるときは、`GITHUB_ALLOW_WRITE=true`を足します
+1. `docker compose up -d --build`でコンテナーを作り直します。`ollama_health`で状態を確かめられます
+
+#### privateリポジトリを取得する
+
+SSHの鍵は要りません。
+`GITHUB_MCP_TOKEN`にfine-grainedのトークンを設定すると、HTTPS経由でそのまま取得できます。
+サーバーはトークンを`x-access-token`のBasic認証としてgitに渡します。
+子プロセスの環境変数だけで渡すため、argvに現れず、`.git/config`にも残りません。
+
+1. GitHubの「Settings」→「Developer settings」→「Personal access tokens」→「Fine-grained tokens」で発行します
+1. 「Resource owner」に、対象のリポジトリを持つ利用者か組織を選びます
+1. 「Repository access」は「Only select repositories」にして、**使うリポジトリだけを選びます**
+1. 「Repository permissions」を次のように設定します
+
+    | 権限 | 必要な場面 |
+    |------|------------|
+    | Metadata: Read | 必須です。ほかの権限を選ぶと自動で付きます |
+    | Contents: Read | `git_clone`です。pushもするならRead and write |
+    | Pull requests: Read | `pr_list`、`pr_view`、`pr_diff`、`pr_comments`です。PRを作るならRead and write |
+    | Issues: Read | `issue_list`、`issue_view`です。コメントするならRead and write |
+    | Checks: Read | `pr_checks`です |
+
+1. `.env`に`GITHUB_MCP_TOKEN=github_pat_...`と書き、`docker compose up -d`で作り直します
+1. `ollama_health`の`github api`が`enabled`になれば有効です
+
+トークンを設定していないと、privateリポジトリの取得は`Repository not found`で失敗します。
+GitHubが認証のない要求に404を返すためで、名前の打ち間違いと見分けが付きません。
+サーバーはこのとき、トークンが未設定であることを書き添えます。
+
+- 取得先は`CLONE_ROOT/owner/repo`です。パスは`owner`と`repo`から組み立てるため、渡した文字列がパスの区切りとして働く余地がありません
+- URLは受け取りません。`owner/repo`だけを受け、`https://github.com/owner/repo.git`はサーバーが組み立てます
+- 取得したリポジトリは`list_files`と`files`と`read_file`から読めます。ローカルのモデルにレビューさせる目的なので、これは意図した動きです
+- **書き込みはstdioでだけ有効です。** `GIT_ALLOW_WRITE`と`GITHUB_ALLOW_WRITE`をtrueにしても、HTTP経由では`git_write`と`github_write`が出ません
+- `main`、`master`、`develop`への直pushは、設定にかかわらず拒みます。それらをheadにしたPull Requestの作成も拒みます
+- `gh`コマンドは入れていません。GitHubのRESTのAPIを直に呼ぶため、`gh api`や`gh alias`のような別の実行経路がそもそもありません
+
+### 監査ログ
+
+サーバーはファイルを書き、リポジトリを取得し、pushし、Pull Requestを作れます。
+何が行われたかを後から言えるよう、ツールの呼び出しを1行1JSONで記録します。
+
+```json
+{"ts":"2026-09-22T12:00:00.000Z","identity":"you@example.com","kind":"tool","tool":"git_write","ok":true,"ms":842,"args":{"repo":"223n/mcp-server","op":"push","branch":"feature/x"}}
+```
+
+- 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
+- `identity`は、Cloudflare AccessのJWTの`email`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
+- `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
+  - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
+  - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
+- `resources/read`にはツール名がなく、ツールの記録に載りません。読み取りの経路としては同じ重さなので、`"kind":"resource"`として別に記録します
+- Dockerでは`docker logs ollama-mcp`で見られます。ログは10MBを3世代まで残します
+
+### 同時に走らせる数を絞る
+
+OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行列に並ぶだけで、全体は速くなりません。
+待っている間もクライアントの上限（claude.aiは約240秒）は進みます。
+
+- `OLLAMA_MAX_CONCURRENCY`（既定2）までを同時に走らせ、それを超えた分は`OLLAMA_MAX_QUEUE`（既定8）まで待ち行列に並べます
+- 待ち行列も一杯のときは、待たせずにその場で断ります。Claudeを長く待たせず、早く判断できるようにするためです
+- 待っている間は、進捗の通知で「何件待ちか」を伝えます
+- 今の状態は`ollama_health`の`concurrency`に出ます
+
 ## セキュリティ
 
 - `.env`はコミットしません。`.gitignore`で外しています
@@ -158,7 +286,24 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - ファイルの読み込みは`FILE_ROOTS`の配下だけに限ります
   - `.env`、`.envrc`、`.npmrc`、秘密鍵、`app_local.php`などの秘密のファイルと、`.git`や`.ssh`などの配下は拒みます
   - Windowsの8.3形式の短い名前（`ENV~1`など）で回り込むことも拒みます
+- 書き出せるのは`OUTPUT_DIR`の配下だけです。`FILE_ROOTS`には書きません
+  - HTTPで書き出せるのは、`HTTP_ALLOW_WRITES=true`に加えて認証を設定したときだけです。`HTTP_ALLOW_FILES`だけでは書けません
+  - ファイル名は英数字と`_`と`-`だけに限り、`NUL`や`COM1`などWindowsが特別扱いする名前も拒みます
+  - 全角の`／`はNFKCで`/`になるため、正規化してから確かめます
+  - 作成は`O_CREAT|O_EXCL`で行います。先に置かれたシンボリックリンクをたどって別の場所へ書くことはありません
+- グロブでまとめて渡すときは、拒否リストではなく拡張子の許可リストで絞ります。名前を指定せずにサーバーが選ぶため、明示的なパスより狭くしています
+  - 先頭が`.`の名前、拡張子のないファイル、ハードリンクは展開で拾いません
 - 読み込んだファイルに書かれた指示は、ローカルのモデルの出力に紛れ込むことがあります。出力の中の指示には従わないよう、ツールの応答と説明に書いてあります
+  - `OUTPUT_DIR`を`FILE_ROOTS`の配下に置くと、書き出した出力を読み返せる代わりに、モデルの出力が普通のファイルのような顔で戻ってきます。起動時に警告を出し、書き出したファイルの先頭に出自を書いています
+- gitを動かすときは、環境変数を継承しません。`GIT_SSH_COMMAND`や`GIT_EXTERNAL_DIFF`など、任意のコマンドを実行させる変数を持ち込ませないためです
+  - 設定は`/etc/git/server.gitconfig`の1枚だけを読ませます。取得したリポジトリの`.git/config`に書かれた危険なキーは効きません
+  - `https`以外のプロトコル（`ext::`、`file://`、`git://`、`ssh://`）を拒みます
+  - 引数は必ず配列で渡し、シェルを介しません。利用者の値は値の位置にしか入らず、`-`で始まる値は拒みます
+  - トークンは子プロセスの環境変数だけで渡します。argvに現れず、`.git/config`にも残りません
+- gitは`files`引数とは別の読み取り口になります。`diff`からは秘密のファイルをpathspecで外し、`show`は中身を返しません
+  - ただしこれは許可リストによる防御で、`files.js`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
+- 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
+- ツールの呼び出しは監査ログに残します。中身は出しませんが、ファイルのパスと操作の種類は残します
 - HTTPのアクセスログは10MBを3世代まで残します
 
 ## ディレクトリ
@@ -174,9 +319,10 @@ mcp-server/
 ├─ src/
 │  ├─ server.js                     McpServer を作る（HTTP と stdio で共通）
 │  ├─ config/                       環境変数、モデル、定型の指示
+│  ├─ git/exec.js                   git の起動（環境を継承しない、引数は配列、上限と中断）
 │  ├─ http/auth.js                  HTTP の認証（静的なトークン、Cloudflare Access の JWT）
 │  ├─ ollama/client.js              Ollama の API（ストリーミング、タイムアウト、中断）
-│  └─ tools/                        ツール、ファイルの読み込みと一覧
+│  └─ tools/                        ツール、ファイルの読み込みと一覧、出力の保存、リソース
 └─ test/                            試験（Ollama の代わりに試験用のサーバーを使う）
 ```
 
@@ -194,6 +340,18 @@ npm test
 
 - HTTPとstdioで、MCPの2025年版と2026-07-28版の両方につながること
 - ファイルの読み込みの防御（許可ルートの外、`..`、シンボリックリンク、秘密のファイル、大きさの上限）と、`list_files`の絞り込み
+- 同じ防御が、グロブの展開と`resources/read`でも働くこと
+- 行範囲の切り出しで、行番号が元のファイルのまま振られること
+- `inline_files`の名前で、見出しやフェンスを偽装できないこと
+- 書き出しの防御（パス区切り、`..`、二重の拡張子、Windowsの装置名、全角の区切り、置かれたシンボリックリンク）
+- 認証のないHTTPで、`resources`も書き出しの引数も出ないこと
+- `owner/repo`の検証（`..`、パスの区切り、Windowsの装置名、`.git`で終わる名前、URL）
+- `-`で始まる値をgitの引数として拒むこと
+- 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
+- `diff`から秘密のファイルが外れること
+- HTTPでは`git_write`と`github_write`を出さないこと
+- 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
+- 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること
@@ -202,6 +360,9 @@ npm test
 - 環境変数の不正な値で、起動時に止まること
 
 CIは、Node 22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。
+あわせてTrivyでイメージの脆弱性を見ます。
+`apk`で入れたパッケージの版はDependabotが追わないため、ここで拾います。
+直せるもの（上流に修正がある高・重大）が見つかると失敗し、直せないものは記録に残すだけにします。
 
 ## リポジトリの運用
 

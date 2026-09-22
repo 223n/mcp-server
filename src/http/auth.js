@@ -123,6 +123,9 @@ export function createAuthMiddleware() {
   return async (req, res, next) => {
     try {
       if (token && matchesToken(req.headers.authorization, token)) {
+        // 静的なトークンには識別子が無い。監査では「トークンで通った」ことだけ分かる
+        req.mcpIdentity = "token";
+
         return next();
       }
 
@@ -132,6 +135,9 @@ export function createAuthMiddleware() {
         const payload = await verifyAccessJwt(assertion);
 
         if (payload && isAllowedIdentity(payload)) {
+          // 監査に残す識別子。email が無いサービストークンは sub で見分ける
+          req.mcpIdentity = payload.email ?? `sub:${payload.sub ?? "unknown"}`;
+
           return next();
         }
 

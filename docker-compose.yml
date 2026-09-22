@@ -24,7 +24,11 @@ services:
       DEFAULT_MODEL: ${DEFAULT_MODEL:-nucbox-fast:latest}
       DEEP_MODEL: ${DEEP_MODEL:-qwen2.5-coder:14b}
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300000}
-      OLLAMA_MAX_DURATION: ${OLLAMA_MAX_DURATION:-900000}
+      OLLAMA_MAX_DURATION: ${OLLAMA_MAX_DURATION:-3000000}
+      # 同時に走らせる生成の数と、待ち行列の長さ。
+      # Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
+      OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-2}
+      OLLAMA_MAX_QUEUE: ${OLLAMA_MAX_QUEUE:-8}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech}
       HTTP_ALLOW_FILES: ${HTTP_ALLOW_FILES:-false}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
@@ -34,9 +38,32 @@ services:
       # ファイルを渡すツール用（ホスト側パス=コンテナー内パス）。
       # stdio と、HTTP_ALLOW_FILES=true かつ認証を設定した HTTP で使われる
       FILE_ROOTS: 'C:\dev=/work/dev;C:\docker=/work/docker'
+      # ローカルのモデルの出力を書き出す先。空なら保存の機能ごと無効。
+      # 例: 'C:\dev\ollama-out=/work/dev/ollama-out'（先にホスト側で作っておくこと）
+      OUTPUT_DIR: ${OUTPUT_DIR:-}
+      # HTTP でも保存を許すかどうか。HTTP_ALLOW_FILES とは別に持ち、既定は false
+      HTTP_ALLOW_WRITES: ${HTTP_ALLOW_WRITES:-false}
+      # リポジトリを取得する先。サーバーが書き換えてよいのはここの配下だけ。
+      # C:\dev 全体ではなく専用のサブディレクトリにして、既存のプロジェクトを触らせない
+      CLONE_ROOT: ${CLONE_ROOT:-C:\dev\claude=/work/dev/claude}
+      # 取得してよい GitHub の owner（カンマ区切り）。空なら取得そのものを拒む
+      GIT_ALLOWED_OWNERS: ${GIT_ALLOWED_OWNERS:-223n}
+      # commit と push を許すかどうか。stdio でだけ効き、HTTP では常に無効
+      GIT_ALLOW_WRITE: ${GIT_ALLOW_WRITE:-false}
+      GIT_TIMEOUT: ${GIT_TIMEOUT:-120000}
+      GIT_MAX_DURATION: ${GIT_MAX_DURATION:-600000}
+      GIT_USER_NAME: ${GIT_USER_NAME:-}
+      GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+      # GitHub の API のトークン。GITHUB_TOKEN という名前は、
+      # CI やシェルにたまたま存在して意図せず有効になるため使わない
+      GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:-}
+      # PR の作成とコメントを許すかどうか。stdio でだけ効き、HTTP では常に無効
+      GITHUB_ALLOW_WRITE: ${GITHUB_ALLOW_WRITE:-false}
 
     volumes:
-      - C:/dev:/work/dev:ro
+      # C:/dev は読み書き可能。OUTPUT_DIR への書き出しと、今後のリポジトリの取得に使う。
+      # サーバーが実際に書くのは OUTPUT_DIR の配下だけで、読み込みのツールは今までどおり書き換えない
+      - C:/dev:/work/dev
       - C:/docker:/work/docker:ro
 
     healthcheck:

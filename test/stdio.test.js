@@ -56,7 +56,7 @@ describe("stdio", () => {
       try {
         const { tools } = await client.listTools();
 
-        assert.equal(tools.length, 6);
+        assert.equal(tools.length, 7);
 
         const listing = await client.callTool({
           name: "list_files",
