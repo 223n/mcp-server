@@ -6,23 +6,23 @@
 
 ## 何が入っているか
 
-| 位置 | 中身 |
-| ---- | ---- |
-| `.textlintrc.js`、`.markdownlint-cli2.jsonc` | 日本語の文書の検査設定です。規則は公開されている共有設定`@223n/lint-config-ja`にあります |
-| `.textlintignore`、`.github/.markdownlint.jsonc` | 検査から外すものと、`.github/`配下だけに効く追加の規則です |
-| `package.json` | 検査に使う道具の依存です。版もここで管理します |
-| `.github/labels.yml` | IssueとPull Requestのラベルの定義です。すべて日本語です |
-| `.github/labeler.yml` | Pull Requestに、変えたファイルやブランチ名からラベルを付ける規則です |
-| `.github/dependabot.yml` | Dependabotの設定です。npmとGitHub Actionsを毎週まとめて更新します |
-| `.github/release.yml` | GitHub Releaseの本文を自動で作るときの分類です |
-| `.github/ISSUE_TEMPLATE/` | Issueのフォームです。バグ報告、機能の要望、質問の3つがあります |
-| `.github/pull_request_template.md` | Pull Requestのテンプレートです |
-| `.github/CODEOWNERS` | 変更の確認を求める相手です |
-| `.github/workflows/` | CI、CodeQL、ラベルの同期、ラベル付け、headブランチの確認、リリースのワークフローです |
-| `scripts/setup.sh`、`scripts/setup.ps1` | テンプレートから作った直後の設定をまとめて行うスクリプトです。`gh`を使います。中身は同じで、`.ps1`はWindows向けです |
-| `CONTRIBUTING.md` | 貢献の手引きです。ブランチの運用と文書の書き方があります |
-| `CLAUDE.md` | Claude Codeが読む決まりです。ブランチを消さないための注意があります |
-| `SECURITY.md` | 脆弱性の報告先です |
+| 位置                                             | 中身                                                                                                                |
+|--------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `.textlintrc.js`、`.markdownlint-cli2.jsonc`     | 日本語の文書の検査設定です。規則は公開されている共有設定`@223n/lint-config-ja`にあります                            |
+| `.textlintignore`、`.github/.markdownlint.jsonc` | 検査から外すものと、`.github/`配下だけに効く追加の規則です                                                          |
+| `package.json`                                   | 検査に使う道具の依存です。版もここで管理します                                                                      |
+| `.github/labels.yml`                             | IssueとPull Requestのラベルの定義です。すべて日本語です                                                             |
+| `.github/labeler.yml`                            | Pull Requestに、変えたファイルやブランチ名からラベルを付ける規則です                                                |
+| `.github/dependabot.yml`                         | Dependabotの設定です。npmとGitHub Actionsを毎週まとめて更新します                                                   |
+| `.github/release.yml`                            | GitHub Releaseの本文を自動で作るときの分類です                                                                      |
+| `.github/ISSUE_TEMPLATE/`                        | Issueのフォームです。バグ報告、機能の要望、質問の3つがあります                                                      |
+| `.github/pull_request_template.md`               | Pull Requestのテンプレートです                                                                                      |
+| `.github/CODEOWNERS`                             | 変更の確認を求める相手です                                                                                          |
+| `.github/workflows/`                             | CI、CodeQL、ラベルの同期、ラベル付け、headブランチの確認、リリースのワークフローです                                |
+| `scripts/setup.sh`、`scripts/setup.ps1`          | テンプレートから作った直後の設定をまとめて行うスクリプトです。`gh`を使います。中身は同じで、`.ps1`はWindows向けです |
+| `CONTRIBUTING.md`                                | 貢献の手引きです。ブランチの運用と文書の書き方があります                                                            |
+| `CLAUDE.md`                                      | Claude Codeが読む決まりです。ブランチを消さないための注意があります                                                 |
+| `SECURITY.md`                                    | 脆弱性の報告先です                                                                                                  |
 
 ## テンプレートから作る
 
@@ -40,13 +40,13 @@
 
 セットアップのスクリプトを実行する前に、次をそろえます。
 
-| 要るもの | 何に使うか |
-| ---- | ---- |
-| リポジトリの管理者権限 | スクリプトが変える設定は、どれも管理者権限が要ります |
-| `gh`（GitHub CLI）とログイン | 設定の変更とPull Requestの作成に使います。先に`gh auth login`を済ませます |
-| `git`の`user.name`と`user.email` | スクリプトが名前の書き換えをコミットします |
-| Node 22以上 | 文書の検査（`npm run lint`）に使います。`scripts/setup.sh`は名前の書き換えにも使います |
-| PowerShell 7以上 | Windowsで`scripts/setup.ps1`を使う場合です。Windows PowerShell 5.1では動きません |
+| 要るもの                         | 何に使うか                                                                             |
+|----------------------------------|----------------------------------------------------------------------------------------|
+| リポジトリの管理者権限           | スクリプトが変える設定は、どれも管理者権限が要ります                                   |
+| `gh`（GitHub CLI）とログイン     | 設定の変更とPull Requestの作成に使います。先に`gh auth login`を済ませます              |
+| `git`の`user.name`と`user.email` | スクリプトが名前の書き換えをコミットします                                             |
+| Node 22以上                      | 文書の検査（`npm run lint`）に使います。`scripts/setup.sh`は名前の書き換えにも使います |
+| PowerShell 7以上                 | Windowsで`scripts/setup.ps1`を使う場合です。Windows PowerShell 5.1では動きません       |
 
 `scripts/setup.ps1`は、名前の書き換えにNodeを使いません。
 
@@ -103,17 +103,17 @@ WindowsではPowerShell 7以上で`scripts/setup.ps1`を使います。
 GitHubの画面で行う設定です。
 「スクリプト」が「行う」のものは、セットアップのスクリプトが代わりに設定します。
 
-| 設定 | 場所 | スクリプト |
-| ---- | ---- | ---- |
-| ActionsにPull Requestの作成と承認を許す | 「Settings」→「Actions」→「General」→「Workflow permissions」 | 行う |
-| マージコミットだけを許し、マージ後にブランチを消す | 「Settings」→「General」→「Pull Requests」 | 行う |
-| Private vulnerability reporting | 「Settings」→「Advanced Security」 | 行う |
-| Dependabot alerts、Dependabot security updates | 「Settings」→「Advanced Security」 | 行う |
-| Code scanningのDefault setupを使わない | 「Settings」→「Advanced Security」 | 行わない |
-| `main`と`develop`の削除を禁止する | 「Settings」→「Rules」 | 行う |
-| `main`と`develop`のそのほかのブランチ保護（任意） | 「Settings」→「Rules」 | 行わない |
-| 変数`RUNS_ON`（セルフホストのランナーを使う場合） | 「Settings」→「Secrets and variables」→「Actions」→「Variables」 | `--runs-on`で行う |
-| このリポジトリ自身をテンプレートにする | 「Settings」→「General」→「Template repository」 | `--template`で行う |
+| 設定                                               | 場所                                                             | スクリプト         |
+|----------------------------------------------------|------------------------------------------------------------------|--------------------|
+| ActionsにPull Requestの作成と承認を許す            | 「Settings」→「Actions」→「General」→「Workflow permissions」    | 行う               |
+| マージコミットだけを許し、マージ後にブランチを消す | 「Settings」→「General」→「Pull Requests」                       | 行う               |
+| Private vulnerability reporting                    | 「Settings」→「Advanced Security」                               | 行う               |
+| Dependabot alerts、Dependabot security updates     | 「Settings」→「Advanced Security」                               | 行う               |
+| Code scanningのDefault setupを使わない             | 「Settings」→「Advanced Security」                               | 行わない           |
+| `main`と`develop`の削除を禁止する                  | 「Settings」→「Rules」                                           | 行う               |
+| `main`と`develop`のそのほかのブランチ保護（任意）  | 「Settings」→「Rules」                                           | 行わない           |
+| 変数`RUNS_ON`（セルフホストのランナーを使う場合）  | 「Settings」→「Secrets and variables」→「Actions」→「Variables」 | `--runs-on`で行う  |
+| このリポジトリ自身をテンプレートにする             | 「Settings」→「General」→「Template repository」                 | `--template`で行う |
 
 次は組織の管理者に頼みます。
 どれも、リポジトリ側では変えられません。
@@ -137,17 +137,17 @@ GitHubの画面で行う設定です。
 テンプレート由来の値が残っているファイルです。
 「スクリプト」が「行う」のものは、セットアップのスクリプトが書き換えて`develop`へのPull Requestを開きます。
 
-| ファイル | 書き換えるところ | スクリプト |
-| ---- | ---- | ---- |
-| `.github/CODEOWNERS` | 変更の確認を求める相手 | 行う |
-| `.github/ISSUE_TEMPLATE/config.yml` | 脆弱性の報告先のURL | 行う |
-| `package.json` | `name` | 行う |
-| `package.json` | `description`と`version` | 行わない |
-| `package.json` | `private: true`。npmに公開するなら外します | 行わない |
-| `README.md` | このファイル全体 | 行わない |
-| `SECURITY.md` | 非公開で連絡できる先 | 行わない |
-| `LICENSE` | `Copyright [yyyy] [name of copyright owner]`の行 | 行わない |
-| `LICENSE`と`package.json`の`license` | ライセンスを変える場合 | 行わない |
+| ファイル                             | 書き換えるところ                                 | スクリプト |
+|--------------------------------------|--------------------------------------------------|------------|
+| `.github/CODEOWNERS`                 | 変更の確認を求める相手                           | 行う       |
+| `.github/ISSUE_TEMPLATE/config.yml`  | 脆弱性の報告先のURL                              | 行う       |
+| `package.json`                       | `name`                                           | 行う       |
+| `package.json`                       | `description`と`version`                         | 行わない   |
+| `package.json`                       | `private: true`。npmに公開するなら外します       | 行わない   |
+| `README.md`                          | このファイル全体                                 | 行わない   |
+| `SECURITY.md`                        | 非公開で連絡できる先                             | 行わない   |
+| `LICENSE`                            | `Copyright [yyyy] [name of copyright owner]`の行 | 行わない   |
+| `LICENSE`と`package.json`の`license` | ライセンスを変える場合                           | 行わない   |
 
 `version`はテンプレートの`0.2.0`から始まります。
 最初のリリースは`0.2.0`より大きい版だけが通ります。
@@ -157,19 +157,19 @@ GitHubの画面で行う設定です。
 
 作る前に知っておくと、あとで困らないものです。
 
-| 場面 | 何が起きるか | どうするか |
-| ---- | ---- | ---- |
-| ブランチ名 | `release/`、`hotfix/`、`merge/`で始めると、リリースの仕組みが反応します | 作業ブランチには`feature/`を使います |
-| Pull Requestのhead | `main`や`develop`をheadにすると、「PRのheadブランチを確かめる」が失敗します | リリースはワークフローに任せます。詳しくは[CLAUDE.md](../CLAUDE.md)にあります |
-| マージの方法 | squashやrebaseだと、リリースノートにPull Requestが載らず、次の版で衝突します | マージコミット（Create a merge commit）でマージします |
-| ラベル | 同期が済むまで、IssueフォームとDependabotが指定するラベルは黙って付きません | 最初のPull Requestを開く前にセットアップを済ませます |
-| `.github/CODEOWNERS` | Pull Requestのbaseブランチのものが読まれ、`main`には最初のリリースまで届きません | `main`向けのPull Requestで確認者が付かなくても、設定漏れではありません |
-| Issueのフォーム | 既定ブランチ（`main`）に入るまで、画面に反映されません | 同じく、`main`に入るまで待ちます |
-| セルフホストのランナー | `RUNS_ON`のラベルに一致するランナーが無いと、失敗せずに待機のまま止まります | 設定したらCIを手で1回動かして確かめます |
-| 改行コード | `.gitattributes`が全ファイルをLFに固定します | CRLFのファイルを持ち込むと、最初のコミットで全行が差分になります |
+| 場面                   | 何が起きるか                                                                      | どうするか                                                                    |
+|------------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------------------------------|
+| ブランチ名             | `release/`、`hotfix/`、`merge/`で始めると、リリースの仕組みが反応します           | 作業ブランチには`feature/`を使います                                          |
+| Pull Requestのhead     | `main`や`develop`をheadにすると、「PRのheadブランチを確かめる」が失敗します       | リリースはワークフローに任せます。詳しくは[CLAUDE.md](../CLAUDE.md)にあります |
+| マージの方法           | squashやrebaseだと、リリースノートにPull Requestが載らず、次の版で衝突します      | マージコミット（Create a merge commit）でマージします                         |
+| ラベル                 | 同期が済むまで、IssueフォームとDependabotが指定するラベルは黙って付きません       | 最初のPull Requestを開く前にセットアップを済ませます                          |
+| `.github/CODEOWNERS`   | Pull Requestのbaseブランチのものが読まれ、`main`には最初のリリースまで届きません  | `main`向けのPull Requestで確認者が付かなくても、設定漏れではありません        |
+| Issueのフォーム        | 既定ブランチ（`main`）に入るまで、画面に反映されません                            | 同じく、`main`に入るまで待ちます                                              |
+| セルフホストのランナー | `RUNS_ON`のラベルに一致するランナーが存在しないと、失敗せずに待機のまま止まります | 設定したらCIを手で1回動かして確かめます                                       |
+| 改行コード             | `.gitattributes`が全ファイルをLFに固定します                                      | CRLFのファイルを持ち込むと、最初のコミットで全行が差分になります              |
 
 リリースやCIが途中で止まったときは、ワークフローのログに日本語で対処方法が出ます。
-`main`と`develop`に共通の祖先が無い場合だけ、後の「履歴が繋がっていないとき」を見てください。
+`main`と`develop`に共通の祖先がない場合だけ、後の「履歴が繋がっていないとき」を見てください。
 
 ## 日本語の文書を検査する
 
@@ -201,28 +201,28 @@ CIではあわせて、ワークフローの構文を`actionlint`で、安全性
 IssueとPull Requestのラベルはすべて日本語です。
 `.github/labels.yml`が定義で、「ラベルを同期する」ワークフローがリポジトリのラベルをこの内容に揃えます。
 ラベルを足したり変えたりするときは、GitHubの画面ではなくこのファイルを変えてください。
-ファイルに無いラベルは消えます。
+ファイルに存在しないラベルは消えます。
 ただし`main`からの同期では消しません。
 `main`の`.github/labels.yml`が`develop`より古い期間に、`develop`で足したラベルを消さないためです。
 
-| ラベル | 用途 | 誰が付けるか |
-| ---- | ---- | ---- |
-| バグ | 期待どおりに動かない | Issueフォーム |
-| 機能追加 | 新しい機能や改善の要望 | Issueフォーム |
-| ドキュメント | 文書の追加や修正 | ラベラー、人 |
-| 質問 | 使い方や仕様についての質問 | Issueフォーム |
-| アクセシビリティ | 障害のある人の利用を妨げるもの | 人 |
-| 重複 | すでにあるIssueやPull Requestと同じ内容 | 人 |
-| 無効 | 内容が正しくない、または対象外 | 人 |
-| 対応しない | 対応しないと判断したもの | 人 |
-| 初心者向け | はじめて貢献する人に向く課題 | 人 |
-| 助けが必要 | 手を貸してほしい課題 | 人 |
-| 依存関係 | 依存パッケージやアクションの更新 | Dependabot、ラベラー |
-| npm | npmパッケージの更新 | Dependabot |
-| GitHub Actions | GitHub Actionsの更新 | Dependabot、ラベラー |
-| リリース | リリースの準備と公開 | リリースのワークフロー |
-| セキュリティ | 脆弱性やセキュリティに関わる修正 | 人、ラベラー |
-| 破壊的変更 | 後方互換性を壊す変更 | 人 |
+| ラベル           | 用途                                    | 誰が付けるか           |
+|------------------|-----------------------------------------|------------------------|
+| バグ             | 期待どおりに動かない                    | Issueフォーム          |
+| 機能追加         | 新しい機能や改善の要望                  | Issueフォーム          |
+| ドキュメント     | 文書の追加や修正                        | ラベラー、人           |
+| 質問             | 使い方や仕様についての質問              | Issueフォーム          |
+| アクセシビリティ | 障害のある人の利用を妨げるもの          | 人                     |
+| 重複             | すでにあるIssueやPull Requestと同じ内容 | 人                     |
+| 無効             | 内容が正しくない、または対象外          | 人                     |
+| 対応しない       | 対応しないと判断したもの                | 人                     |
+| 初心者向け       | はじめて貢献する人に向く課題            | 人                     |
+| 助けが必要       | 手を貸してほしい課題                    | 人                     |
+| 依存関係         | 依存パッケージやアクションの更新        | Dependabot、ラベラー   |
+| npm              | npmパッケージの更新                     | Dependabot             |
+| GitHub Actions   | GitHub Actionsの更新                    | Dependabot、ラベラー   |
+| リリース         | リリースの準備と公開                    | リリースのワークフロー |
+| セキュリティ     | 脆弱性やセキュリティに関わる修正        | 人、ラベラー           |
+| 破壊的変更       | 後方互換性を壊す変更                    | 人                     |
 
 GitHubが最初から用意する英語のラベル（`bug`や`enhancement`など）は、付いているIssueを保ったまま日本語のラベルに改名されます。
 Dependabotが作る既定のラベル（`dependencies`、`javascript`、`github_actions`）も同じように改名されます。
@@ -249,7 +249,7 @@ DependabotはSHAとコメントの両方を更新します。
 不要に見えても消さないでください。消すとセキュリティ更新からラベルと接頭辞が無くなります。
 
 `develop`をやめて`main`だけで運用する場合は、`.github/dependabot.yml`の`target-branch`を消してください。
-`develop`が無いまま残っていると、版の更新が一切来なくなります。
+`develop`が存在しないまま残っていると、版の更新が一切来なくなります。
 
 ## ブランチとリリース
 
@@ -306,24 +306,24 @@ npm version patch --no-git-tag-version
 設定は「Settings」→「Secrets and variables」→「Actions」の「Variables」にあります。
 `scripts/setup.sh --runs-on ラベル`でも行えます。
 Windowsでは`.\scripts\setup.ps1 -RunsOn ラベル`です。
-変数が無いときは`ubuntu-latest`に倒れるため、設定しなくても動きます。
+変数が存在しないときは`ubuntu-latest`に倒れるため、設定しなくても動きます。
 
 セルフホストのランナーには、`git`と`gh`（GitHub CLI）、Dockerが要ります。
-Dockerはzizmorの検査（コンテナで動きます）に使います。
+Dockerはzizmorの検査（コンテナーで動きます）に使います。
 Nodeはワークフローが用意します。
 公開リポジトリでセルフホストのランナーを使うと、フォークからのPull Requestで任意のコードが動くため、非公開のリポジトリで使ってください。
 
 ## ワークフローの一覧
 
-| ファイル | いつ動くか | 何をするか |
-| ---- | ---- | ---- |
-| `ci.yml` | `main`と`develop`への`push`、Pull Request、手動 | 日本語の文書、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します |
-| `codeql.yml` | `main`と`develop`への`push`、Pull Request、毎週月曜、手動 | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます |
-| `labels.yml` | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです |
-| `labeler.yml` | Pull Requestを開いたとき、更新したとき | 変えたファイルとブランチ名からラベルを付けます |
-| `branch-guard.yml` | Pull Requestを開いたとき、更新したとき | headブランチが`main`か`develop`なら失敗します。マージは止めません |
-| `release.yml` | 手動 | `develop`からリリースブランチを切り、版を上げ、`main`へのPull Requestを開きます |
-| `release-publish.yml` | `release/*`か`hotfix/*`のPull Requestが`main`にマージされたとき | タグを打ち、GitHub Releaseを作り、`main`を`develop`に戻します |
+| ファイル              | いつ動くか                                                       | 何をするか                                                                                 |
+|-----------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します |
+| `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます     |
+| `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                     |
+| `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                             |
+| `branch-guard.yml`    | Pull Requestを開いたとき、更新したとき                           | headブランチが`main`か`develop`なら失敗します。マージは止めません                          |
+| `release.yml`         | 手動                                                             | `develop`からリリースブランチを切り、版を上げ、`main`へのPull Requestを開きます            |
+| `release-publish.yml` | `release/*`か`hotfix/*`のPull Requestが`main`にマージされたとき  | タグを打ち、GitHub Releaseを作り、`main`を`develop`に戻します                              |
 
 ## 履歴が繋がっていないとき
 
@@ -340,7 +340,7 @@ Nodeはワークフローが用意します。
 直し方は2つあります。
 どちらを選ぶかは、`develop`に残したい変更があるかどうかで決まります。
 
-`develop`に残したい変更が無い場合は、`develop`を消してからスクリプトを実行し直します。
+`develop`に残したい変更が存在しない場合は、`develop`を消してからスクリプトを実行し直します。
 スクリプトが`main`から`develop`を作り直すため、履歴が繋がります。
 Windowsでは`scripts/setup.sh`のところを`.\scripts\setup.ps1`に読み替えてください。
 
@@ -362,7 +362,7 @@ git push origin develop
 ```
 
 こちらには副作用が2つあります。
-共通の祖先が無いため、`main`にしかないファイルは削除ではなく追加として扱われ、`develop`に現れます。
+共通の祖先が存在しないため、`main`にしかないファイルは削除ではなく追加として扱われ、`develop`に現れます。
 履歴にも、2つの根を繋ぐマージコミットが残ります。
 
 どちらの方法でも、`develop`から切った作業ブランチと、`develop`に向けて開いているPull Requestの扱いは確かめてください。

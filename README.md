@@ -6,10 +6,10 @@
 入口は次の2つです。
 どちらもMCPの2026-07-28版（`server/discover`）と2025年版（`initialize`）の両方に応答します。
 
-| 入口 | 用途 | ファイルの読み込み |
-| ---- | ---- | ---- |
+| 入口                                               | 用途                                                              | ファイルの読み込み                 |
+|----------------------------------------------------|-------------------------------------------------------------------|------------------------------------|
 | stdio（`docker exec -i ollama-mcp node stdio.js`） | 同じPCのClaude CodeとClaude Desktopから使います。こちらを勧めます | 使えます（`FILE_ROOTS`の配下だけ） |
-| HTTP（`POST /mcp`、ポート3000） | Cloudflare Tunnelを通して、claude.aiなどから使います | 既定で使えません |
+| HTTP（`POST /mcp`、ポート3000）                    | Cloudflare Tunnelを通して、claude.aiなどから使います              | 既定で使えません                   |
 
 ## 構成
 
@@ -27,13 +27,13 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 
 ## MCPのツール
 
-| ツール | 内容 | 既定のモデル |
-| ---- | ---- | ---- |
-| `ollama_chat` | 下書き、要約、翻訳などの作業を任せます。`profile`でphp、docker、git、code_reviewの定型の指示を選べます | `DEFAULT_MODEL` |
-| `ollama_review_code` | コードを確かめます。行番号付きで「重大度、行、問題、改善案」を返します | `DEEP_MODEL` |
-| `ollama_explain_error` | エラーやログの原因の候補と対処を返します | `DEEP_MODEL` |
-| `ollama_list_models` | 入っているモデルの一覧を返します | - |
-| `ollama_health` | Ollamaが動いているかと、サーバーの設定を返します | - |
+| ツール                 | 内容                                                                                                   | 既定のモデル    |
+|------------------------|--------------------------------------------------------------------------------------------------------|-----------------|
+| `ollama_chat`          | 下書き、要約、翻訳などの作業を任せます。`profile`でphp、docker、git、code_reviewの定型の指示を選べます | `DEFAULT_MODEL` |
+| `ollama_review_code`   | コードを確かめます。行番号付きで「重大度、行、問題、改善案」を返します                                 | `DEEP_MODEL`    |
+| `ollama_explain_error` | エラーやログの原因の候補と対処を返します                                                               | `DEEP_MODEL`    |
+| `ollama_list_models`   | 入っているモデルの一覧を返します                                                                       | -               |
+| `ollama_health`        | Ollamaが動いているかと、サーバーの設定を返します                                                       | -               |
 
 - stdioでは、`files`引数にWindowsの絶対パスを渡すと、サーバーがファイルを読み込みます。Claudeはファイルの中身を引数として書き出さずに済むため、トークンを節約できます
 - 応答の末尾に`[ollama] model=... prompt_tokens=... output_tokens=... done_reason=... elapsed=...`が付きます。`done_reason=length`や`done_reason=timeout`のときは、出力が途中で切れています
@@ -42,7 +42,7 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 
 ## セットアップ
 
-### コンテナを起動する
+### コンテナーを起動する
 
 ```powershell
 docker compose up -d --build
@@ -83,24 +83,24 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 ## 環境変数
 
 `.env`に書きます。
-`docker-compose.yml`は`.env`の値を差し込むことにだけ使い、次の変数だけをコンテナに渡します。
+`docker-compose.yml`は`.env`の値を差し込むことにだけ使い、次の変数だけをコンテナーに渡します。
 
-| 変数 | 既定値 | 説明 |
-| ---- | ---- | ---- |
-| `OLLAMA_URL` | `http://host.docker.internal:11434` | OllamaのURLです |
-| `DEFAULT_MODEL` | `nucbox-fast:latest` | `ollama_chat`の既定のモデルです |
-| `DEEP_MODEL` | `qwen2.5-coder:14b` | コードの確認とエラーの解析の既定のモデルです |
-| `OLLAMA_TIMEOUT` | `300000` | Ollamaから何も届かない状態の上限（ミリ秒）です。キューの待ち、モデルの読み込み、プロンプトの評価も含みます |
-| `OLLAMA_MAX_DURATION` | `900000` | 1回の生成全体の上限（ミリ秒）です |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です |
-| `HTTP_ALLOW_FILES` | `false` | HTTPでもファイルの読み込みを許すかどうかです |
-| `MCP_AUTH_TOKEN` | なし | 設定すると、HTTPに`Authorization: Bearer <値>`を求めます |
-| `CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUD` | なし | 設定すると、HTTPにCloudflare AccessのJWT（`Cf-Access-Jwt-Assertion`）を求めます |
-| `FILE_ROOTS` | `docker-compose.yml`で設定 | `ホストのパス=コンテナのパス`を`;`で区切って並べます |
+| 変数                                     | 既定値                                                         | 説明                                                                                                       |
+|------------------------------------------|----------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `OLLAMA_URL`                             | `http://host.docker.internal:11434`                            | OllamaのURLです                                                                                            |
+| `DEFAULT_MODEL`                          | `nucbox-fast:latest`                                           | `ollama_chat`の既定のモデルです                                                                            |
+| `DEEP_MODEL`                             | `qwen2.5-coder:14b`                                            | コードの確認とエラーの解析の既定のモデルです                                                               |
+| `OLLAMA_TIMEOUT`                         | `300000`                                                       | Ollamaから何も届かない状態の上限（ミリ秒）です。キューの待ち、モデルの読み込み、プロンプトの評価も含みます |
+| `OLLAMA_MAX_DURATION`                    | `900000`                                                       | 1回の生成全体の上限（ミリ秒）です                                                                          |
+| `ALLOWED_HOSTS`                          | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です                                                                       |
+| `HTTP_ALLOW_FILES`                       | `false`                                                        | HTTPでもファイルの読み込みを許すかどうかです                                                               |
+| `MCP_AUTH_TOKEN`                         | なし                                                           | 設定すると、HTTPに`Authorization: Bearer <値>`を求めます                                                   |
+| `CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUD` | なし                                                           | 設定すると、HTTPにCloudflare AccessのJWT（`Cf-Access-Jwt-Assertion`）を求めます                            |
+| `FILE_ROOTS`                             | `docker-compose.yml`で設定                                     | `ホストのパス=コンテナのパス`を`;`で区切って並べます                                                       |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
 - `MCP_AUTH_TOKEN`と`CF_ACCESS_*`の両方を設定したときは、どちらかを満たせば通します
-- どちらも設定しないと、このPCのほかのコンテナからも`host.docker.internal:3000`を通してHTTPを呼べます
+- どちらも設定しないと、このPCのほかのコンテナーからも`host.docker.internal:3000`を通してHTTPを呼べます
 
 ## 動作を確かめる
 
@@ -121,7 +121,7 @@ claude.aiから使うときは、Cloudflare TunnelとCloudflare Accessを前に�
 1. Cloudflare Zero Trustで、そのホスト名に「Self-hosted」のAccessのアプリを1つだけ作ります
 1. アプリに「Allow」のポリシーを足し、使う人のメールアドレスを入れます
 1. アプリの「Managed OAuth」を有効にし、「Allowed redirect URIs」に`https://claude.ai/api/mcp/auth_callback`を足します
-1. `.env`に`CF_ACCESS_TEAM_DOMAIN`とアプリの`CF_ACCESS_AUD`を書き、コンテナを作り直します
+1. `.env`に`CF_ACCESS_TEAM_DOMAIN`とアプリの`CF_ACCESS_AUD`を書き、コンテナーを作り直します
 1. claude.aiの「設定」の「コネクタ」で、`https://<ホスト名>/mcp`をカスタムコネクタとして足します
 
 - claude.aiとClaude Desktopのリモートのコネクタは、1回の呼び出しを約240秒で打ち切ります。Cloudflareは応答が約100秒途切れると打ち切ります。長い生成はローカルで行います
