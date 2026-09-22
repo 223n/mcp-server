@@ -1,7 +1,12 @@
-import dotenv from "dotenv";
-
-// stdio モードでは stdout が MCP の通信路になるため、dotenv のログは必ず抑止する
-dotenv.config({ quiet: true });
+// ホストの Node で直接動かすときのために .env を読む（Docker では compose が環境変数を渡すため .env は無い）。
+// Node 標準の process.loadEnvFile は、すでにある環境変数を上書きせず、標準出力にも何も書かない
+try {
+  process.loadEnvFile();
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    throw error;
+  }
+}
 
 // 不正な値は起動時にエラーにする（"5m" や "3e5" を黙って 5 や 3 と解釈しない）
 function toInt(name, fallback, min, max) {
