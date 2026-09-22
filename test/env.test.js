@@ -2,21 +2,21 @@ import assert from "node:assert/strict";
 
 import { spawnSync } from "node:child_process";
 
-import { tmpdir } from "node:os";
-
 import path from "node:path";
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import { pathToFileURL } from "node:url";
 
-import { cleanEnv, ROOT } from "./helpers/server.js";
+import { cleanEnv, removeCreatedTrees, ROOT, WORK_DIR } from "./helpers/server.js";
+
+after(removeCreatedTrees);
 
 const envModule = pathToFileURL(path.join(ROOT, "src", "config", "env.js")).href;
 
 function load(extra) {
   return spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(envModule)})`], {
-    cwd: tmpdir(),
+    cwd: WORK_DIR,
 
     env: { ...cleanEnv(), ...extra },
 

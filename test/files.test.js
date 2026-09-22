@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 
-import { symlinkSync, writeFileSync } from "node:fs";
+import { rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { tmpdir } from "node:os";
 
 import path from "node:path";
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 
-import { createFileTree } from "./helpers/server.js";
+import { createFileTree, removeCreatedTrees, WORK_DIR } from "./helpers/server.js";
 
 // 手元の .env を読ませないため、設定を読み込む前に作業ディレクトリを移す
-process.chdir(tmpdir());
+process.chdir(WORK_DIR);
+
+after(removeCreatedTrees);
 
 const root = createFileTree();
 
@@ -54,6 +56,9 @@ for (const [name, target, expected] of [
   [".npmrc", () => at("app", ".npmrc"), /may contain secrets/],
   ["app_local.php", () => at("app", "config", "app_local.php"), /may contain secrets/],
   [".git の配下", () => at("app", ".git", "config"), /may contain secrets/],
+  [".dev.vars", () => at("app", ".dev.vars"), /may contain secrets/],
+  ["acme.json", () => at("app", "acme.json"), /may contain secrets/],
+  ["secrets の配下", () => at("app", "secrets", "db.txt"), /may contain secrets/],
   ["ディレクトリ", () => at("app", "src"), /Not a regular file/],
   ["バイナリ", () => at("binary.bin"), /Binary file/],
   ["大きすぎるファイル", () => at("big.txt"), /File too large/],
@@ -76,6 +81,8 @@ test("シンボリックリンクで許可ルートの外へ出られない", as
   const outside = path.join(tmpdir(), `mcp-outside-${process.pid}.txt`);
 
   writeFileSync(outside, "outside\n");
+
+  t.after(() => rmSync(outside, { force: true }));
 
   try {
     symlinkSync(outside, at("link.txt"));
@@ -109,7 +116,17 @@ test("グロブで絞り込み、秘密のファイルと依存のディレク�
 
   assert.match(listing, /\.env\.example/);
 
-  for (const hidden of [/\.env \(/, /\.npmrc/, /app_local\.php/, /\.git/, /node_modules/, /vendor/]) {
+  for (const hidden of [
+    /\.env \(/,
+    /\.npmrc/,
+    /app_local\.php/,
+    /\.git/,
+    /node_modules/,
+    /vendor/,
+    /\.dev\.vars/,
+    /acme\.json/,
+    /secrets/,
+  ]) {
     assert.doesNotMatch(listing, hidden);
   }
 });
@@ -126,6 +143,67 @@ test("件数の上限で打ち切る", async () => {
   const listing = await listFiles({ path: root, pattern: "**/*", maxEntries: 2 });
 
   assert.match(listing, /truncated at 2 entries/);
+});
+
+test("一致がちょうど上限の件数なら、打ち切ったとは言わない", async () => {
+  const listing = await listFiles({ path: at("app", "src"), pattern: "**/*", maxEntries: 3 });
+
+  assert.equal(listing.split("\n").length, 3, listing);
+
+  assert.doesNotMatch(listing, /truncated/);
+});
+
+test("直下だけのパターンでは下の階層に降りない", async () => {
+  const listing = await listFiles({ path: root, pattern: "*" });
+
+  assert.match(listing, /deep[\\/]$/m);
+
+  assert.doesNotMatch(listing, /deep\.php/);
+
+  assert.doesNotMatch(listing, /not searched/);
+});
+
+test("深さの上限に達したら、そのことを書き添える", async () => {
+  const listing = await listFiles({ path: root, pattern: "**/*.php" });
+
+  assert.match(listing, /Main\.php/);
+
+  assert.doesNotMatch(listing, /deep\.php/);
+
+  assert.match(listing, /more than 8 levels below `path` were not searched/);
+});
+
+test("中かっことディレクトリだけの指定を使える", async () => {
+  const both = await listFiles({ path: at("app"), pattern: "**/*.{php,js}" });
+
+  assert.match(both, /Main\.php/);
+
+  assert.match(both, /util\.js/);
+
+  const dirs = await listFiles({ path: at("app"), pattern: "**/" });
+
+  assert.match(dirs, /src[\\/]$/m);
+
+  assert.doesNotMatch(dirs, /Main\.php/);
+});
+
+test("バックトラックを誘うパターンでもすぐ終わる（ReDoS を防ぐ）", async () => {
+  const started = Date.now();
+
+  await listFiles({ path: root, pattern: `${"*".repeat(80)}x` });
+
+  await listFiles({ path: root, pattern: `${"**/".repeat(30)}x` });
+
+  await listFiles({ path: root, pattern: `${"*a".repeat(40)}b` });
+
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test("中断されたら一覧をやめる", async () => {
+  await assert.rejects(
+    listFiles({ path: root, pattern: "**/*", signal: AbortSignal.abort() }),
+    (error) => error.name === "AbortError",
+  );
 });
 
 test("一覧でも .. と秘密のディレクトリを拒む", async () => {

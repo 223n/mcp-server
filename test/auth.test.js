@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 
 import { generateKeyPairSync, sign } from "node:crypto";
 
-import { tmpdir } from "node:os";
+import { after, test } from "node:test";
 
-import { test } from "node:test";
+import { removeCreatedTrees, WORK_DIR } from "./helpers/server.js";
 
-process.chdir(tmpdir());
+process.chdir(WORK_DIR);
+
+after(removeCreatedTrees);
 
 process.env.CF_ACCESS_TEAM_DOMAIN = "team.example.cloudflareaccess.com";
 
@@ -142,6 +144,18 @@ test("ミドルウェア: 許可したメールアドレスの JWT で通る（�
 
 test("ミドルウェア: 許可していないメールアドレスの JWT は 401", async () => {
   const token = makeToken({ ...good, email: "other@example.com" });
+
+  assert.equal(await runMiddleware({ "cf-access-jwt-assertion": token }), 401);
+});
+
+test("ミドルウェア: email のない JWT（サービストークン）は、絞り込みがあると 401", async () => {
+  const { email, ...serviceToken } = good;
+
+  assert.ok(email);
+
+  const token = makeToken({ ...serviceToken, common_name: "service-token-id.access" });
+
+  assert.ok(await verifyAccessJwt(token), "the JWT itself is valid");
 
   assert.equal(await runMiddleware({ "cf-access-jwt-assertion": token }), 401);
 });

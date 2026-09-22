@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 
-import { tmpdir } from "node:os";
-
 import path from "node:path";
 
 import { after, before, describe, test } from "node:test";
@@ -10,9 +8,11 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 
 import { startMockOllama } from "./helpers/mock-ollama.js";
 
-import { createFileTree, startHttpServer, text } from "./helpers/server.js";
+import { createFileTree, removeCreatedTrees, startHttpServer, text, WORK_DIR } from "./helpers/server.js";
 
-process.chdir(tmpdir());
+process.chdir(WORK_DIR);
+
+after(removeCreatedTrees);
 
 async function connect(url, { mode = "auto", headers } = {}) {
   const client = new Client({ name: "test", version: "0" }, { versionNegotiation: { mode } });
@@ -326,6 +326,15 @@ describe("タイムアウト", () => {
       assert.match(text(result), /done_reason=timeout/);
 
       assert.match(text(result), /WARNING: .*OLLAMA_MAX_DURATION/);
+
+      // タイムアウトで Ollama への呼び出しも止まったこと
+      const deadline = Date.now() + 5000;
+
+      while (ollama.state.aborted === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      assert.ok(ollama.state.aborted > 0, "mock Ollama did not see the request aborted");
     } finally {
       await client.close();
     }

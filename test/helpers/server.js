@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 
 import { createServer } from "node:net";
 
@@ -11,6 +11,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+// 試験だけが使う空のディレクトリ。作業ディレクトリにして、手元や共有の一時ディレクトリの .env を読ませない
+export const WORK_DIR = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-cwd-")));
+
+const createdTrees = [WORK_DIR];
+
+// 試験で作ったディレクトリを消す。各試験のファイルの after() から呼ぶ
+export function removeCreatedTrees() {
+  // Windows では作業ディレクトリを消せないため、先に外へ出る
+  process.chdir(tmpdir());
+
+  for (const tree of createdTrees.splice(0)) {
+    rmSync(tree, { recursive: true, force: true });
+  }
+}
 
 // 空いているポートを1つ取る
 export async function freePort() {
@@ -29,6 +44,8 @@ export async function freePort() {
 export function createFileTree() {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-files-")));
 
+  createdTrees.push(root);
+
   const files = {
     "app/src/Main.php": "<?php\necho 'hello';\n",
     "app/src/lib/util.js": "export const x = 1;\n",
@@ -40,6 +57,10 @@ export function createFileTree() {
     "app/.git/config": "[remote]\n",
     "app/node_modules/pkg/index.js": "module.exports = 1;\n",
     "app/vendor/lib/Lib.php": "<?php\n",
+    "app/.dev.vars": "API_KEY=secret\n",
+    "app/acme.json": "{}\n",
+    "app/secrets/db.txt": "password\n",
+    "deep/1/2/3/4/5/6/7/8/9/deep.php": "<?php\n",
     "binary.bin": `a${String.fromCharCode(0)}b`,
     "big.txt": "x".repeat(600 * 1024),
   };
@@ -59,9 +80,9 @@ export function createFileTree() {
 export async function startHttpServer(env) {
   const port = await freePort();
 
-  // cwd を一時ディレクトリにして、手元の .env を読ませない
+  // cwd を試験用の空のディレクトリにして、.env を読ませない
   const child = spawn(process.execPath, [path.join(ROOT, "index.js")], {
-    cwd: tmpdir(),
+    cwd: WORK_DIR,
 
     env: { ...cleanEnv(), HOST: "127.0.0.1", PORT: String(port), ...env },
 

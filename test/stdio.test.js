@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 
 import { spawn } from "node:child_process";
 
-import { tmpdir } from "node:os";
-
 import path from "node:path";
 
 import { after, before, describe, test } from "node:test";
@@ -14,9 +12,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { startMockOllama } from "./helpers/mock-ollama.js";
 
-import { cleanEnv, createFileTree, ROOT, text } from "./helpers/server.js";
+import { cleanEnv, createFileTree, removeCreatedTrees, ROOT, text, WORK_DIR } from "./helpers/server.js";
 
-process.chdir(tmpdir());
+process.chdir(WORK_DIR);
+
+after(removeCreatedTrees);
 
 describe("stdio", () => {
   let ollama;
@@ -45,7 +45,7 @@ describe("stdio", () => {
 
           args: [path.join(ROOT, "stdio.js")],
 
-          cwd: tmpdir(),
+          cwd: WORK_DIR,
 
           env,
 
@@ -82,8 +82,10 @@ describe("stdio", () => {
   test("stdin が閉じると、処理中の Ollama の呼び出しを止めて終わる", async () => {
     const before = ollama.state.aborted;
 
+    const chatsBefore = ollama.state.chats.length;
+
     const child = spawn(process.execPath, [path.join(ROOT, "stdio.js")], {
-      cwd: tmpdir(),
+      cwd: WORK_DIR,
 
       env,
 
@@ -114,7 +116,16 @@ describe("stdio", () => {
       params: { name: "ollama_chat", arguments: { prompt: "MOCK_SLOW" } },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // 決まった時間を待つと、起動の遅い環境で呼び出しが Ollama に届く前に閉じてしまうため、届くのを待つ
+    const reached = Date.now() + 10000;
+
+    while (ollama.state.chats.length === chatsBefore && Date.now() < reached) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    assert.ok(ollama.state.chats.length > chatsBefore, "the chat never reached mock Ollama");
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const exited = new Promise((resolve) => child.once("exit", resolve));
 
