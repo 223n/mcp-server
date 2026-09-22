@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.git
+.env
+.github
+.markdownlint-cli2.jsonc
+.textlintignore
+.textlintrc.js
+claude
+docs
+scripts
+reset.ps1

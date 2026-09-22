@@ -21,7 +21,7 @@ GitFlowに沿って運用します。
 | `release/*` | リリースの準備です。「リリース」ワークフローが`develop`から切り、`main`に取り込みます |
 | `hotfix/*` | リリース済みの内容の緊急の修正です。`main`から切り、そのブランチで`package.json`の版も上げます。`main`にマージすると公開され、`develop`にも戻されます |
 
-リリースと緊急の修正の手順は[README](README.md)の「ブランチとリリース」にあります。
+リリースと緊急の修正の手順は[docs/repository-operations.md](docs/repository-operations.md)の「ブランチとリリース」にあります。
 Pull Requestはマージコミット（Create a merge commit）でマージします。
 
 `main`と`develop`は、Pull Requestのheadにしないでください。
