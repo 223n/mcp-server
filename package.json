@@ -1,6 +1,6 @@
 {
   "name": "mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "ローカルの Ollama を MCP サーバーとして公開し、Claude から作業を任せられるようにする。",
   "license": "Apache-2.0",
