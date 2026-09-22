@@ -27,8 +27,16 @@ process.env.GIT_USER_NAME = "test";
 
 process.env.GIT_USER_EMAIL = "test@example.com";
 
-const { cloneReady, gitClone, gitRead, gitWrite, initClone, isProtectedBranch, parseSlug } =
-  await import("../src/tools/git.js");
+const {
+  cloneFailureHint,
+  cloneReady,
+  gitClone,
+  gitRead,
+  gitWrite,
+  initClone,
+  isProtectedBranch,
+  parseSlug,
+} = await import("../src/tools/git.js");
 
 const { checkValue } = await import("../src/git/exec.js");
 
@@ -255,4 +263,48 @@ test("CLONE_ROOT が無ければ git のツールごと無効にする", async (
   config.cloneRoot = saved;
 
   assert.equal(await initClone({ warn: silent }), true);
+});
+
+test("トークンが無いときの clone の失敗に、原因の手がかりを足す", async () => {
+  const { config } = await import("../src/config/config.js");
+
+  const saved = config.githubToken;
+
+  config.githubToken = "";
+
+  try {
+    // GitHub は認証の無い private リポジトリにも 404 を返す
+    const hinted = cloneFailureHint("remote: Repository not found.", "223n/secret");
+
+    assert.match(hinted, /Repository not found/);
+
+    assert.match(hinted, /GITHUB_MCP_TOKEN is not set/);
+
+    assert.match(hinted, /223n\/secret/);
+
+    // 認証と関係のない失敗には足さない
+    assert.equal(
+      cloneFailureHint("fatal: destination path already exists", "223n/x"),
+      "fatal: destination path already exists",
+    );
+  } finally {
+    config.githubToken = saved;
+  }
+});
+
+test("トークンがあるときは手がかりを足さない", async () => {
+  const { config } = await import("../src/config/config.js");
+
+  const saved = config.githubToken;
+
+  config.githubToken = "github_pat_example";
+
+  try {
+    assert.equal(
+      cloneFailureHint("remote: Repository not found.", "223n/x"),
+      "remote: Repository not found.",
+    );
+  } finally {
+    config.githubToken = saved;
+  }
 });

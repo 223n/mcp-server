@@ -217,6 +217,33 @@ HTTPでも、`files`引数と`list_files`を使えます。
 1. Pull Requestの作成まで任せるときは、`GITHUB_ALLOW_WRITE=true`を足します
 1. `docker compose up -d --build`でコンテナーを作り直します。`ollama_health`で状態を確かめられます
 
+#### privateリポジトリを取得する
+
+SSHの鍵は要りません。
+`GITHUB_MCP_TOKEN`にfine-grainedのトークンを設定すると、HTTPS経由でそのまま取得できます。
+サーバーはトークンを`x-access-token`のBasic認証としてgitに渡します。
+子プロセスの環境変数だけで渡すため、argvに現れず、`.git/config`にも残りません。
+
+1. GitHubの「Settings」→「Developer settings」→「Personal access tokens」→「Fine-grained tokens」で発行します
+1. 「Resource owner」に、対象のリポジトリを持つ利用者か組織を選びます
+1. 「Repository access」は「Only select repositories」にして、**使うリポジトリだけを選びます**
+1. 「Repository permissions」を次のように設定します
+
+    | 権限 | 必要な場面 |
+    |------|------------|
+    | Metadata: Read | 必須です。ほかの権限を選ぶと自動で付きます |
+    | Contents: Read | `git_clone`です。pushもするならRead and write |
+    | Pull requests: Read | `pr_list`、`pr_view`、`pr_diff`、`pr_comments`です。PRを作るならRead and write |
+    | Issues: Read | `issue_list`、`issue_view`です。コメントするならRead and write |
+    | Checks: Read | `pr_checks`です |
+
+1. `.env`に`GITHUB_MCP_TOKEN=github_pat_...`と書き、`docker compose up -d`で作り直します
+1. `ollama_health`の`github api`が`enabled`になれば有効です
+
+トークンを設定していないと、privateリポジトリの取得は`Repository not found`で失敗します。
+GitHubが認証のない要求に404を返すためで、名前の打ち間違いと見分けが付きません。
+サーバーはこのとき、トークンが未設定であることを書き添えます。
+
 - 取得先は`CLONE_ROOT/owner/repo`です。パスは`owner`と`repo`から組み立てるため、渡した文字列がパスの区切りとして働く余地がありません
 - URLは受け取りません。`owner/repo`だけを受け、`https://github.com/owner/repo.git`はサーバーが組み立てます
 - 取得したリポジトリは`list_files`と`files`と`read_file`から読めます。ローカルのモデルにレビューさせる目的なので、これは意図した動きです
