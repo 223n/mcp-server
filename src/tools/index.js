@@ -70,7 +70,7 @@ export function buildTools({ allowFiles }) {
 
           description:
             `List files and directories under ${fileRootsLabel()} on the machine that runs Ollama, so their paths can be passed to the \`files\` argument of the Ollama tools. ` +
-            "Call it without `path` to get the roots. Secret files and dependency folders (node_modules, vendor, .git) are hidden. Read-only.",
+            "Call it without `path` to get the roots. Secret files and dependency folders (node_modules, vendor, .git) are hidden, symlinks are skipped, and `**` searches at most 8 levels below `path`. Read-only.",
 
           inputSchema: z.strictObject({
             path: z
@@ -83,7 +83,7 @@ export function buildTools({ allowFiles }) {
               .string()
               .max(200)
               .optional()
-              .describe("Glob relative to `path`: `*` = direct children (default), `**/*.php` = all PHP files below, `src/**` = everything under src."),
+              .describe("Glob relative to `path`, case-insensitive: `*` = direct children (default), `**/*.php` = PHP files below, `src/**` = everything under src, `*.{js,ts}` = alternatives, trailing `/` = directories only."),
 
             max_entries: z
               .number()
@@ -96,8 +96,16 @@ export function buildTools({ allowFiles }) {
 
           annotations: { ...READ_ONLY, idempotentHint: true },
 
-          handler: (args) =>
-            listFiles({ path: args.path, pattern: args.pattern, maxEntries: args.max_entries }),
+          handler: (args, ctx) =>
+            listFiles({
+              path: args.path,
+
+              pattern: args.pattern,
+
+              maxEntries: args.max_entries,
+
+              signal: ctx?.mcpReq?.signal,
+            }),
         },
       ]
     : [];
