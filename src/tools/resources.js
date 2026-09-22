@@ -1,5 +1,7 @@
 import { ResourceTemplate } from "@modelcontextprotocol/server";
 
+import { audit } from "../audit.js";
+
 import { readForResource, readRoots } from "./files.js";
 
 // ホスト側の表記（C:\dev\app\x.php）を file:/// の URI にする。
@@ -65,18 +67,30 @@ export function registerFileResources(server) {
       mimeType: "text/plain",
     },
 
-    async (uri, variables, ctx) => ({
-      contents: [
-        {
-          uri: uri.href,
+    async (uri, variables, ctx) => {
+      // resources/read にはツール名が無く、ツールの監査に載らない。
+      // 読み取りの経路としてはツールと同じ重さなので、ここで別に記録する
+      const input = fromUriPath(variables.path);
 
-          mimeType: "text/plain",
+      const started = Date.now();
 
-          text: await readForResource(fromUriPath(variables.path), {
-            signal: ctx?.mcpReq?.signal,
-          }),
-        },
-      ],
-    }),
+      try {
+        const text = await readForResource(input, { signal: ctx?.mcpReq?.signal });
+
+        audit({ kind: "resource", ok: true, ms: Date.now() - started, path: input });
+
+        return { contents: [{ uri: uri.href, mimeType: "text/plain", text }] };
+      } catch (error) {
+        audit({
+          kind: "resource",
+          ok: false,
+          ms: Date.now() - started,
+          path: input,
+          error: String(error?.message ?? error).slice(0, 300),
+        });
+
+        throw error;
+      }
+    },
   );
 }

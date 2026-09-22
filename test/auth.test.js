@@ -123,11 +123,24 @@ async function runMiddleware(headers) {
     },
   };
 
-  await middleware({ headers }, res, () => {
+  const req = { headers };
+
+  await middleware(req, res, () => {
     passed = true;
   });
 
   return passed ? 200 : status;
+}
+
+// 監査に残す識別子だけを取り出す
+async function identityFor(headers) {
+  const middleware = createAuthMiddleware();
+
+  const req = { headers };
+
+  await middleware(req, { status: () => ({ json: () => {} }) }, () => {});
+
+  return req.mcpIdentity;
 }
 
 test("ミドルウェア: 静的なトークンで通る", async () => {
@@ -162,4 +175,41 @@ test("ミドルウェア: email のない JWT（サービストークン）は�
 
 test("ミドルウェア: 資格情報がなければ 401", async () => {
   assert.equal(await runMiddleware({}), 401);
+});
+
+test("監査の識別子: トークンで通ったときは token", async () => {
+  assert.equal(await identityFor({ authorization: "Bearer static-token" }), "token");
+});
+
+test("監査の識別子: Access の JWT では email を使う", async () => {
+  assert.equal(
+    await identityFor({ "cf-access-jwt-assertion": makeToken(good) }),
+    "me@example.com",
+  );
+});
+
+test("監査の識別子: email のない JWT では sub を使う", async () => {
+  const { config } = await import("../src/config/config.js");
+
+  const { email, ...serviceToken } = good;
+
+  assert.ok(email);
+
+  // email での絞り込みを外さないと、サービストークンはそもそも 401 になる
+  const saved = config.cfAccessAllowedEmails;
+
+  config.cfAccessAllowedEmails = [];
+
+  try {
+    assert.match(
+      String(await identityFor({ "cf-access-jwt-assertion": makeToken(serviceToken) })),
+      /^sub:/,
+    );
+  } finally {
+    config.cfAccessAllowedEmails = saved;
+  }
+});
+
+test("監査の識別子: 通らなかったときは付かない", async () => {
+  assert.equal(await identityFor({ authorization: "Bearer wrong" }), undefined);
 });

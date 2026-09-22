@@ -25,6 +25,10 @@ services:
       DEEP_MODEL: ${DEEP_MODEL:-qwen2.5-coder:14b}
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300000}
       OLLAMA_MAX_DURATION: ${OLLAMA_MAX_DURATION:-3000000}
+      # 同時に走らせる生成の数と、待ち行列の長さ。
+      # Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
+      OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-2}
+      OLLAMA_MAX_QUEUE: ${OLLAMA_MAX_QUEUE:-8}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech}
       HTTP_ALLOW_FILES: ${HTTP_ALLOW_FILES:-false}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}

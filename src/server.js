@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { McpServer } from "@modelcontextprotocol/server";
 
+import { auditedCall } from "./audit.js";
+
 import { readRoots } from "./tools/files.js";
 
 import { buildTools } from "./tools/index.js";
@@ -86,7 +88,9 @@ export function createServer({ allowFiles = false, allowWrites = false, local = 
 
       async (args, ctx) => {
         try {
-          return { content: toContent(await tool.handler(args, ctx)) };
+          return {
+            content: toContent(await auditedCall(tool.name, args, () => tool.handler(args, ctx))),
+          };
         } catch (error) {
           return {
             content: [

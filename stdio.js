@@ -1,5 +1,7 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
+import { setDefaultIdentity } from "./src/audit.js";
+
 import { createServer } from "./src/server.js";
 
 import { initClone } from "./src/tools/git.js";
@@ -13,6 +15,9 @@ const allowWrites = await initOutput();
 await initClone();
 
 // stdout は MCP の通信路なので、ログは必ず stderr（console.error）に出す
+// stdio は同じ PC の Claude からの接続なので、監査の識別子は固定でよい
+setDefaultIdentity("stdio");
+
 const handle = serveStdio(() => createServer({ allowFiles: true, allowWrites, local: true }), {
   onerror: (error) => console.error("[mcp]", error?.message ?? error),
 });

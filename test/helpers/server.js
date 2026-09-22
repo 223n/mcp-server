@@ -141,6 +141,8 @@ export function cleanEnv() {
     "DEEP_MODEL",
     "OLLAMA_TIMEOUT",
     "OLLAMA_MAX_DURATION",
+    "OLLAMA_MAX_CONCURRENCY",
+    "OLLAMA_MAX_QUEUE",
     "PORT",
     "HOST",
     "ALLOWED_HOSTS",

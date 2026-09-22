@@ -8,11 +8,15 @@ import { cloneLabel, cloneReady, ownersLabel } from "./git.js";
 
 import { githubReady } from "./github.js";
 
+import { limiterStats } from "./ollama.js";
+
 import { outputLabel, outputReady } from "./output.js";
 
 export function createHealthTool({ allowFiles, allowWrites = false, local = false }) {
   return async function ollamaHealth(_args, ctx) {
     const signal = ctx?.mcpReq?.signal;
+
+    const stats = limiterStats();
 
     const [version, tags] = await Promise.all([
       ollamaRequest("/api/version", undefined, { signal }),
@@ -39,7 +43,8 @@ export function createHealthTool({ allowFiles, allowWrites = false, local = fals
       `models installed: ${(tags.models ?? []).length}`,
       `default model: ${config.defaultModel}`,
       `deep model: ${config.deepModel}`,
-      `timeout: ${Math.round(config.ollamaTimeout / 1000)} s`,
+      `timeout: ${Math.round(config.ollamaTimeout / 1000)} s (idle), ${Math.round(config.ollamaMaxDuration / 1000)} s (total)`,
+      `concurrency: ${stats.active} running, ${stats.queued} queued (max ${stats.max} + ${stats.maxQueue} queued)`,
       `file access: ${files}`,
       `output saving: ${output}`,
       `git clone: ${clone}`,

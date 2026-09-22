@@ -4,6 +4,8 @@ import { getSystemPrompt } from "../config/prompts.js";
 
 import { ollamaChat, ollamaRequest } from "../ollama/client.js";
 
+import { createLimiter } from "../ollama/limiter.js";
+
 import { buildFileContext } from "./files.js";
 
 import { degenerationWarning, preview, saveOutput } from "./output.js";
@@ -19,7 +21,7 @@ function progressReporter(ctx) {
     return undefined;
   }
 
-  return ({ chunks, elapsedMs }) => {
+  return ({ chunks, elapsedMs, queued }) => {
     ctx.mcpReq
       .notify({
         method: "notifications/progress",
@@ -29,8 +31,9 @@ function progressReporter(ctx) {
 
           progress: Math.round(elapsedMs / 1000),
 
-          message:
-            chunks === 0
+          message: queued
+            ? `Waiting for a free slot on this server (${queued} ahead)…`
+            : chunks === 0
               ? "Waiting for Ollama (queued / loading model / reading prompt)…"
               : `Ollama is generating… ${chunks} chunks so far`,
         },
@@ -72,6 +75,18 @@ function warningsFor(result) {
   }
 
   return warnings;
+}
+
+// 生成の枠はプロセス全体で 1 つ。HTTP では 1 リクエストごとにサーバーを作り直すため、
+// モジュールの外で持たないと数えられない
+const limiter = createLimiter({
+  max: config.ollamaMaxConcurrency,
+
+  maxQueue: config.ollamaMaxQueue,
+});
+
+export function limiterStats() {
+  return limiter.stats();
 }
 
 function formatResult(result, notes = []) {
@@ -131,25 +146,38 @@ export async function runChat(
   // 伝えないと、渡していないファイルまで見たつもりで「指摘なし」と答えてしまう
   const content = [prompt, ...context.notes, context.block].filter(Boolean).join("\n\n");
 
-  const result = await ollamaChat({
-    model: model ?? config.defaultModel,
+  const report = progressReporter(ctx);
 
-    messages: [
-      ...(system ? [{ role: "system", content: system }] : []),
+  const result = await limiter.run(
+    () =>
+      ollamaChat({
+        model: model ?? config.defaultModel,
 
-      { role: "user", content },
-    ],
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
 
-    options: {
-      temperature: temperature ?? 0.7,
+          { role: "user", content },
+        ],
 
-      ...(maxTokens ? { num_predict: maxTokens } : {}),
+        options: {
+          temperature: temperature ?? 0.7,
+
+          ...(maxTokens ? { num_predict: maxTokens } : {}),
+        },
+
+        signal,
+
+        onProgress: report,
+      }),
+
+    {
+      signal,
+
+      // 待たされていることは、進捗の通知で伝える。黙って止まっているように見せない
+      onWait: ({ active, queued }) =>
+        report?.({ chunks: 0, elapsedMs: 0, queued, active }),
     },
-
-    signal,
-
-    onProgress: progressReporter(ctx),
-  });
+  );
 
   if (save) {
     return await saveAndSummarise(result, context.notes, { outputName });

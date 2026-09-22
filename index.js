@@ -6,6 +6,8 @@ import { toNodeHandler } from "@modelcontextprotocol/node";
 
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
+import { withIdentity } from "./src/audit.js";
+
 import { config } from "./src/config/config.js";
 
 import { createAuthMiddleware } from "./src/http/auth.js";
@@ -163,7 +165,11 @@ app.all("/mcp", (req, res) => {
     return rpcError(res, 415, -32000, "Request body must be JSON (Content-Type: application/json)");
   }
 
-  void mcp(req, res, req.body);
+  // 監査に残す識別子を、この呼び出しの間だけ持ち回る。
+  // 認証が無い構成では "anonymous" になる
+  withIdentity(req.mcpIdentity ?? "anonymous", () => {
+    void mcp(req, res, req.body);
+  });
 });
 
 root.use(app);

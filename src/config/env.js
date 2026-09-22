@@ -53,6 +53,12 @@ export const env = {
   // 無通信の上限（OLLAMA_TIMEOUT）は 300 秒のままなので、Ollama が固まったときは早く気付ける
   OLLAMA_MAX_DURATION: toInt("OLLAMA_MAX_DURATION", 3000000, 1000, MAX_TIMER_MS),
 
+  // 同時に走らせる生成の数と、待ち行列の長さの上限。
+  // Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
+  OLLAMA_MAX_CONCURRENCY: toInt("OLLAMA_MAX_CONCURRENCY", 2, 1, 64),
+
+  OLLAMA_MAX_QUEUE: toInt("OLLAMA_MAX_QUEUE", 8, 0, 1000),
+
   PORT: toInt("PORT", 3000, 1, 65535),
 
   HOST: process.env.HOST || "0.0.0.0",

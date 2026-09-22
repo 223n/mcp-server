@@ -268,6 +268,31 @@ describe("トークンで認証する HTTP（ファイルの読み込みあり�
       });
 
       assert.equal(secret.isError, true);
+
+      // 監査は 1 行の JSON で stderr に出る。識別子とツール名が入り、中身は入らない
+      const entries = server
+        .output()
+        .split("\n")
+        .filter((line) => line.includes('"kind":"tool"'))
+        .map((line) => JSON.parse(line));
+
+      const chat = entries.find((entry) => entry.tool === "ollama_chat" && entry.ok === false);
+
+      assert.ok(chat, server.output());
+
+      assert.equal(chat.identity, "token");
+
+      assert.match(chat.error, /may contain secrets/);
+
+      assert.equal("prompt" in chat.args, false);
+
+      const review = entries.find((entry) => entry.tool === "ollama_review_code");
+
+      assert.ok(review);
+
+      assert.equal(review.ok, true);
+
+      assert.equal(review.args.files.length, 1);
     } finally {
       await client.close();
     }

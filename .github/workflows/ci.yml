@@ -6,7 +6,8 @@ name: CI
 #   lint-workflows  ワークフローの構文と型（actionlint）
 #   zizmor          ワークフローの安全性（zizmor）。アクションの SHA 固定、権限、危険な書き方を見る
 #   test            サーバーの試験（npm test）。Node 22 と 26 で動かす
-#   docker          Docker イメージを作り、起動して HTTP と stdio の応答を確かめる
+#   docker          Docker イメージを作り、起動して HTTP と stdio の応答を確かめる。
+#                   あわせて Trivy でイメージの脆弱性を見る（apk のパッケージは Dependabot が追わないため）
 #
 # プロジェクト固有のビルドやテストは、これらと並ぶジョブとして足す。
 on:
@@ -148,6 +149,32 @@ jobs:
 
       - name: イメージを作る
         run: docker build --tag "${IMAGE}" .
+
+      # apk で入れたパッケージ（git など）の版は Dependabot が追わない。
+      # CVE はベースイメージのダイジェストが動いたときにしか拾えないため、ここで見る。
+      # 直せるもの（ignore-unfixed）だけで落とす。上流に修正が無いものは出すだけにする
+      - name: イメージの脆弱性を検査する
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      # 直せないものも記録に残す。こちらは落とさない
+      - name: 直せない脆弱性を一覧する
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+          format: table
+          skip-setup-trivy: true
 
       - name: 起動して応答を確かめる
         run: |

@@ -112,6 +112,8 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `DEEP_MODEL`                             | `qwen2.5-coder:14b`                                            | コードの確認とエラーの解析の既定のモデルです                                                                                                       |
 | `OLLAMA_TIMEOUT`                         | `300000`                                                       | Ollamaから何も届かない状態の上限（ミリ秒）です。キューの待ち、モデルの読み込み、プロンプトの評価も含みます                                         |
 | `OLLAMA_MAX_DURATION`                    | `3000000`                                                      | 1回の生成全体の上限（ミリ秒）です。HTTPの`requestTimeout`もこの値+60秒に合わせます                                                                 |
+| `OLLAMA_MAX_CONCURRENCY`                 | `2`                                                            | 同時に走らせる生成の数です。OllamaはGPUを1つずつ使うため、並べても全体は速くなりません                                                             |
+| `OLLAMA_MAX_QUEUE`                       | `8`                                                            | 待ち行列の長さの上限です。ここも一杯なら、待たせずにその場で断ります                                                                              |
 | `ALLOWED_HOSTS`                          | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です                                                                                                               |
 | `HTTP_ALLOW_FILES`                       | `false`                                                        | HTTPでもファイルの読み込みを許すかどうかです。認証（`MCP_AUTH_TOKEN`か`CF_ACCESS_*`）がないときは無視します                                        |
 | `MCP_AUTH_TOKEN`                         | なし                                                           | 設定すると、HTTPに`Authorization: Bearer <値>`を求めます                                                                                           |
@@ -222,6 +224,33 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - `main`、`master`、`develop`への直pushは、設定にかかわらず拒みます。それらをheadにしたPull Requestの作成も拒みます
 - `gh`コマンドは入れていません。GitHubのRESTのAPIを直に呼ぶため、`gh api`や`gh alias`のような別の実行経路がそもそもありません
 
+### 監査ログ
+
+サーバーはファイルを書き、リポジトリを取得し、pushし、Pull Requestを作れます。
+何が行われたかを後から言えるよう、ツールの呼び出しを1行1JSONで記録します。
+
+```json
+{"ts":"2026-09-22T12:00:00.000Z","identity":"you@example.com","kind":"tool","tool":"git_write","ok":true,"ms":842,"args":{"repo":"223n/mcp-server","op":"push","branch":"feature/x"}}
+```
+
+- 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
+- `identity`は、Cloudflare AccessのJWTの`email`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
+- `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
+  - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
+  - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
+- `resources/read`にはツール名がなく、ツールの記録に載りません。読み取りの経路としては同じ重さなので、`"kind":"resource"`として別に記録します
+- Dockerでは`docker logs ollama-mcp`で見られます。ログは10MBを3世代まで残します
+
+### 同時に走らせる数を絞る
+
+OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行列に並ぶだけで、全体は速くなりません。
+待っている間もクライアントの上限（claude.aiは約240秒）は進みます。
+
+- `OLLAMA_MAX_CONCURRENCY`（既定2）までを同時に走らせ、それを超えた分は`OLLAMA_MAX_QUEUE`（既定8）まで待ち行列に並べます
+- 待ち行列も一杯のときは、待たせずにその場で断ります。Claudeを長く待たせず、早く判断できるようにするためです
+- 待っている間は、進捗の通知で「何件待ちか」を伝えます
+- 今の状態は`ollama_health`の`concurrency`に出ます
+
 ## セキュリティ
 
 - `.env`はコミットしません。`.gitignore`で外しています
@@ -247,6 +276,7 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - gitは`files`引数とは別の読み取り口になります。`diff`からは秘密のファイルをpathspecで外し、`show`は中身を返しません
   - ただしこれは許可リストによる防御で、`files.js`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
 - 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
+- ツールの呼び出しは監査ログに残します。中身は出しませんが、ファイルのパスと操作の種類は残します
 - HTTPのアクセスログは10MBを3世代まで残します
 
 ## ディレクトリ
@@ -293,6 +323,8 @@ npm test
 - 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
 - `diff`から秘密のファイルが外れること
 - HTTPでは`git_write`と`github_write`を出さないこと
+- 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
+- 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること
@@ -301,6 +333,9 @@ npm test
 - 環境変数の不正な値で、起動時に止まること
 
 CIは、Node 22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。
+あわせてTrivyでイメージの脆弱性を見ます。
+`apk`で入れたパッケージの版はDependabotが追わないため、ここで拾います。
+直せるもの（上流に修正がある高・重大）が見つかると失敗し、直せないものは記録に残すだけにします。
 
 ## リポジトリの運用
 
