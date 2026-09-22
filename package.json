@@ -1,22 +1,34 @@
 {
-  "name": "repo-template",
-  "version": "0.3.0",
+  "name": "mcp-server",
+  "version": "1.0.0",
   "private": true,
-  "description": "リポジトリのテンプレート。日本語の文書を検査する設定と、GitHub の運用に要る設定ファイルを含む。",
+  "description": "ローカルの Ollama を MCP サーバーとして公開し、Claude から作業を任せられるようにする。",
   "license": "Apache-2.0",
+  "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "start": "node index.js",
+    "stdio": "node stdio.js",
+    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
     "lint": "npm run lint:md && npm run lint:ja",
     "lint:md": "markdownlint-cli2",
     "lint:md:fix": "markdownlint-cli2 --fix",
     "lint:ja": "textlint .",
     "lint:ja:fix": "textlint --fix ."
   },
+  "dependencies": {
+    "@modelcontextprotocol/express": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
+  },
   "devDependencies": {
-    "@223n/lint-config-ja": "^1.1.0",
-    "markdownlint-cli2": "^0.23.2",
+    "@223n/lint-config-ja": "^2.1.1",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "markdownlint-cli2": "^0.23.3",
     "textlint": "^15.8.0"
   },
   "overrides": {

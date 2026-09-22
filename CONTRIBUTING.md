@@ -21,7 +21,7 @@ GitFlowに沿って運用します。
 | `release/*` | リリースの準備です。「リリース」ワークフローが`develop`から切り、`main`に取り込みます |
 | `hotfix/*` | リリース済みの内容の緊急の修正です。`main`から切り、そのブランチで`package.json`の版も上げます。`main`にマージすると公開され、`develop`にも戻されます |
 
-リリースと緊急の修正の手順は[README](README.md)の「ブランチとリリース」にあります。
+リリースと緊急の修正の手順は[docs/repository-operations.md](docs/repository-operations.md)の「ブランチとリリース」にあります。
 Pull Requestはマージコミット（Create a merge commit）でマージします。
 
 `main`と`develop`は、Pull Requestのheadにしないでください。
@@ -40,7 +40,7 @@ Pull Requestはマージコミット（Create a merge commit）でマージし�
 - 全角文字と半角文字の間にスペースを入れません。半角の語はコードスパンに入れると読みやすくなります
 
 手元で直せる指摘は`npm run lint:md:fix`と`npm run lint:ja:fix`で直ります。
-直したあとは差分を見て、意図しない変更が無いかを確かめてください。
+直したあとは差分を見て、意図しない変更がないかを確かめてください。
 
 ## スクリプトの書き方
 
@@ -66,4 +66,4 @@ Pull Requestはマージコミット（Create a merge commit）でマージし�
 IssueとPull Requestのラベルは`.github/labels.yml`で管理します。
 ラベルを足したり変えたりするときは、GitHubの画面ではなくこのファイルを変えてください。
 `develop`に入ると同期のワークフローが動き、リポジトリのラベルがファイルの内容に揃います。
-`main`側からの同期では、ファイルに無いラベルを消しません。
+`main`側からの同期では、ファイルにないラベルを消しません。

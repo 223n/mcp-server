@@ -2,7 +2,7 @@
 
 このリポジトリで作業するときの決まりです。
 Claude Codeがこのファイルを読みます。
-人が読む手引きは[CONTRIBUTING.md](CONTRIBUTING.md)と[README.md](README.md)にあります。
+人が読む手引きは[CONTRIBUTING.md](CONTRIBUTING.md)、[README.md](README.md)、[docs/repository-operations.md](docs/repository-operations.md)にあります。
 
 ## mainとdevelopをPull Requestのheadにしない
 
@@ -13,10 +13,10 @@ GitHubの文書は、この設定を「head branches automatically deleted after
 消えるのはheadブランチだけで、baseブランチは消えません。
 そのため、`main`や`develop`をheadにしたPull Requestを作ると、マージでそのブランチごと失う恐れがあります。
 
-| Pull Request | headブランチ | マージすると |
-| ---- | ---- | ---- |
-| `develop`→`main` | `develop` | `develop`が消える恐れがあります |
-| `main`→`develop` | `main` | `main`が消える恐れがあります |
+| Pull Request     | headブランチ | マージすると                    |
+|------------------|--------------|---------------------------------|
+| `develop`→`main` | `develop`    | `develop`が消える恐れがあります |
+| `main`→`develop` | `main`       | `main`が消える恐れがあります    |
 
 `develop`が消えると、リリースのワークフローが最初の確認で止まります。
 `release.yml`が`develop`の存在をAPIで確かめ、無ければ`develop ブランチが無い`と出して終わるためです。
@@ -69,7 +69,7 @@ GitHubの文書は「Branch protection rules and repository rules can also preve
 これで戻ります。
 復元できる期間は公式の文書に書かれていないため、気付いたらすぐ戻してください。
 
-ボタンが無いときは、消える前の先端のSHAから作り直します。
+ボタンが存在しないときは、消える前の先端のSHAから作り直します。
 
 ```bash
 gh pr view <番号> --json headRefOid --jq .headRefOid
@@ -82,7 +82,19 @@ gh api --method POST "repos/OWNER/REPO/git/refs" -f "ref=refs/heads/develop" -f 
 ## そのほかの決まり
 
 - ブランチの運用と文書の書き方は[CONTRIBUTING.md](CONTRIBUTING.md)にあります
-- リリースの手順は[README.md](README.md)の「ブランチとリリース」にあります
+- リリースの手順は[docs/repository-operations.md](docs/repository-operations.md)の「ブランチとリリース」にあります
 - `scripts/setup.sh`と`scripts/setup.ps1`は同じことを行います。片方だけを変えないでください
 - Pull Requestはマージコミット（Create a merge commit）でマージします
 - 変更したら`npm run lint`を通します
+
+## このサーバーの決まり
+
+- stdioで動くとき、標準出力はMCPの通信路です。ログは`console.error`で標準エラーに出します。`console.log`を足すと通信が壊れます
+- `.env`はコミットしません。`.gitignore`で外しています
+- `src/tools/files.js`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
+- 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、文書の検査の道具は`devDependencies`に入れます
+- サーバーを変えたら`npm test`を通します。Ollamaの代わりに`test/helpers/mock-ollama.js`を使うため、GPUは要りません。振る舞いを足したら試験も足します
+- 試験の中でサーバーを起動するときは、作業ディレクトリを一時ディレクトリにします。手元の`.env`を読ませないためです
+- 変えたあとは`docker compose up -d --build`で作り直し、`curl.exe http://127.0.0.1:3000/healthz`と、stdioの`initialize`の応答を確かめます
+- HTTPでファイルを読めるのは、認証を設定したときだけです。この条件（`src/config/config.js`の`httpAllowFiles`）を外さないでください
+- ツールの名前（`ollama_chat`など）は変えないでください。Claudeの側の許可（`mcp__ollama__*`）とサブエージェントの定義が名前を使っています
