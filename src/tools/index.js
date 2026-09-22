@@ -6,7 +6,7 @@ import { SYSTEM_PROMPTS } from "../config/prompts.js";
 
 import { ollamaExplainError } from "./error.js";
 
-import { fileRootsLabel } from "./files.js";
+import { fileRootsLabel, listFiles } from "./files.js";
 
 import { createHealthTool } from "./health.js";
 
@@ -60,6 +60,55 @@ export function buildTools({ allowFiles }) {
   const filesHint = filesEnabled
     ? ` Prefer passing \`files\` (paths under ${fileRootsLabel()}) over pasting contents: it saves Claude tokens.`
     : "";
+
+  const fileTools = filesEnabled
+    ? [
+        {
+          name: "list_files",
+
+          title: "Files: list files under the allowed roots",
+
+          description:
+            `List files and directories under ${fileRootsLabel()} on the machine that runs Ollama, so their paths can be passed to the \`files\` argument of the Ollama tools. ` +
+            "Call it without `path` to get the roots. Secret files and dependency folders (node_modules, vendor, .git) are hidden, symlinks are skipped, and `**` searches at most 8 levels below `path`. Read-only.",
+
+          inputSchema: z.strictObject({
+            path: z
+              .string()
+              .max(1024)
+              .optional()
+              .describe("Directory to list (absolute Windows path under an allowed root). Omit to list the roots."),
+
+            pattern: z
+              .string()
+              .max(200)
+              .optional()
+              .describe("Glob relative to `path`, case-insensitive: `*` = direct children (default), `**/*.php` = PHP files below, `src/**` = everything under src, `*.{js,ts}` = alternatives, trailing `/` = directories only."),
+
+            max_entries: z
+              .number()
+              .int()
+              .positive()
+              .max(1000)
+              .optional()
+              .describe("Maximum number of entries to return. Default 200."),
+          }),
+
+          annotations: { ...READ_ONLY, idempotentHint: true },
+
+          handler: (args, ctx) =>
+            listFiles({
+              path: args.path,
+
+              pattern: args.pattern,
+
+              maxEntries: args.max_entries,
+
+              signal: ctx?.mcpReq?.signal,
+            }),
+        },
+      ]
+    : [];
 
   return [
     {
@@ -198,5 +247,7 @@ export function buildTools({ allowFiles }) {
 
       handler: createHealthTool({ allowFiles }),
     },
+
+    ...fileTools,
   ];
 }

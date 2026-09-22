@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { config } from "../config/config.js";
 
+import { compileGlob } from "./glob.js";
+
 const MAX_FILE_BYTES = 512 * 1024;
 
 // qwen2.5-coder のコンテキスト長 32k トークンに収まる入力量の目安
@@ -25,10 +27,32 @@ const SENSITIVE_FILES = [
   /^token$/i,
   /^app_local\.php$/i,
   /^wp-config\.php$/i,
+  /^\.dev\.vars/i,
+  /\.tfstate(\.backup)?$/i,
+  /\.p8$/i,
+  /^\.vault-token$/i,
+  /^client_secret.*\.json$/i,
+  /^acme\.json$/i,
+  /^google-services\.json$/i,
+  /^GoogleService-Info\.plist$/i,
 ];
 
 // 秘密情報を置く慣習のあるディレクトリ名
-const SENSITIVE_DIRS = /^\.(ssh|aws|azure|gcloud|gnupg|docker|kube|git|cloudflared)$/i;
+const SENSITIVE_DIRS = /^(\.(ssh|aws|azure|gcloud|gnupg|docker|kube|git|cloudflared|wrangler|terraform)|secrets?)$/i;
+
+// 一覧で中に入らないディレクトリ（依存やビルドの出力で、数が多く役に立たない）
+const SKIPPED_DIRS = /^(node_modules|vendor|\.svn|\.hg|__pycache__|\.venv|\.cache)$/i;
+
+const LIST_MAX_DEPTH = 8;
+
+const LIST_DEFAULT_ENTRIES = 200;
+
+const LIST_MAX_ENTRIES = 1000;
+
+// 1回の一覧でたどるディレクトリの数と時間の上限（C:\dev の全体でも数秒で終わる量）
+const LIST_MAX_DIRS = 20000;
+
+const LIST_TIME_BUDGET_MS = 15000;
 
 export function fileRootsLabel() {
   return config.fileRoots.map((root) => root.hostLabel).join(", ");
@@ -45,7 +69,7 @@ function toUnix(p) {
 // パスの各段を実際のディレクトリ一覧と照合する。
 // Windows の 8.3 形式の短い名前（例: ENV~1 → .env）は一覧に現れないので、ここで弾かれる。
 // 拒否リストの判定も、入力された名前ではなく実際の名前に対して行う。
-async function verifyComponents(realRoot, realLocal, input) {
+async function verifyComponents(realRoot, realLocal, input, kind) {
   const parts = realLocal.slice(realRoot.length).split("/").filter(Boolean);
 
   let current = realRoot;
@@ -63,7 +87,12 @@ async function verifyComponents(realRoot, realLocal, input) {
 
     const isLast = index === parts.length - 1;
 
-    if ((!isLast && SENSITIVE_DIRS.test(actual)) || (isLast && SENSITIVE_FILES.some((p) => p.test(actual)))) {
+    const secret =
+      !isLast || kind === "dir"
+        ? SENSITIVE_DIRS.test(actual)
+        : SENSITIVE_FILES.some((p) => p.test(actual));
+
+    if (secret) {
       throw new Error(`Refusing to read a file that may contain secrets: ${input}`);
     }
 
@@ -71,7 +100,7 @@ async function verifyComponents(realRoot, realLocal, input) {
   }
 }
 
-async function resolveFilePath(input) {
+async function resolvePath(input, kind = "file") {
   const unified = toUnix(input.trim());
 
   const lower = unified.toLowerCase();
@@ -107,12 +136,161 @@ async function resolveFilePath(input) {
       break;
     }
 
-    await verifyComponents(normalizedRoot, normalizedLocal, input);
+    await verifyComponents(normalizedRoot, normalizedLocal, input, kind);
 
-    return realLocal;
+    return { local: normalizedLocal, root, realRoot: normalizedRoot };
   }
 
   throw new Error(`Path is outside the allowed roots (${fileRootsLabel()}): ${input}`);
+}
+
+// コンテナー内のパスを、Claude が files に渡せるホスト側の表記に戻す
+function toHostPath(local, root, realRoot) {
+  const relative = local.slice(realRoot.length).replace(/^\/+/, "");
+
+  const separator = root.hostLabel.includes("\\") ? "\\" : "/";
+
+  const base = root.hostLabel.replace(/[\\/]+$/, "");
+
+  return relative ? base + separator + relative.split("/").join(separator) : base;
+}
+
+export async function listFiles({
+  path: input,
+  pattern = "*",
+  maxEntries = LIST_DEFAULT_ENTRIES,
+  signal,
+} = {}) {
+  if (config.fileRoots.length === 0) {
+    throw new Error("File access is disabled on this server (FILE_ROOTS is not set)");
+  }
+
+  if (!input) {
+    return `Allowed roots (pass one as \`path\`):\n${config.fileRoots.map((root) => root.hostLabel).join("\n")}`;
+  }
+
+  const matcher = compileGlob(pattern);
+
+  const limit = Math.min(maxEntries, LIST_MAX_ENTRIES);
+
+  const { local, root, realRoot } = await resolvePath(input, "dir");
+
+  if (!(await stat(local)).isDirectory()) {
+    throw new Error(`Not a directory: ${input}`);
+  }
+
+  const separator = root.hostLabel.includes("\\") ? "\\" : "/";
+
+  const started = Date.now();
+
+  const results = [];
+
+  let truncated = false;
+
+  let depthLimited = false;
+
+  let budgetExceeded = false;
+
+  let visited = 0;
+
+  // 幅優先でたどる。シンボリックリンクはたどらず、秘密のディレクトリや依存のディレクトリにも入らない。
+  // depth は「path の直下」を 0 とした深さで、パターンが当たりうる深さより下には降りない
+  const queue = [{ dir: local, relative: "", depth: 0 }];
+
+  walk: while (queue.length > 0) {
+    signal?.throwIfAborted();
+
+    if (visited >= LIST_MAX_DIRS || Date.now() - started > LIST_TIME_BUDGET_MS) {
+      budgetExceeded = true;
+
+      break;
+    }
+
+    const { dir, relative, depth } = queue.shift();
+
+    visited += 1;
+
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+
+      const childLocal = `${dir}/${entry.name}`;
+
+      let line;
+
+      if (entry.isDirectory()) {
+        if (SENSITIVE_DIRS.test(entry.name) || SKIPPED_DIRS.test(entry.name)) {
+          continue;
+        }
+
+        if (matcher.test(childRelative, true)) {
+          line = `${toHostPath(childLocal, root, realRoot)}${separator}`;
+        }
+
+        // この下の項目は depth + 2 段になる
+        if (depth + 2 <= matcher.maxDepth) {
+          if (depth + 1 < LIST_MAX_DEPTH) {
+            queue.push({ dir: childLocal, relative: childRelative, depth: depth + 1 });
+          } else {
+            depthLimited = true;
+          }
+        }
+      } else if (entry.isFile()) {
+        if (SENSITIVE_FILES.some((p) => p.test(entry.name)) || !matcher.test(childRelative, false)) {
+          continue;
+        }
+
+        const size = await stat(childLocal)
+          .then((info) => info.size)
+          .catch(() => 0);
+
+        line = `${toHostPath(childLocal, root, realRoot)} (${Math.max(1, Math.round(size / 1024))} KB)`;
+      }
+
+      if (line === undefined) {
+        continue;
+      }
+
+      // 上限の件数を超える一致が見つかったときだけ「打ち切った」とする
+      if (results.length >= limit) {
+        truncated = true;
+
+        break walk;
+      }
+
+      results.push(line);
+    }
+  }
+
+  const notes = [];
+
+  if (truncated) {
+    notes.push(`(truncated at ${limit} entries; narrow \`pattern\` or \`path\`)`);
+  }
+
+  if (depthLimited) {
+    notes.push(
+      `(directories more than ${LIST_MAX_DEPTH} levels below \`path\` were not searched; pass a deeper \`path\`)`,
+    );
+  }
+
+  if (budgetExceeded) {
+    notes.push(`(stopped after visiting ${visited} directories; narrow \`path\` or \`pattern\`)`);
+  }
+
+  const body =
+    results.length > 0
+      ? results.join("\n")
+      : `No entries matched \`${pattern}\` under ${input}. Supported syntax: \`*\`, \`?\`, \`**\`, \`{a,b}\`, and a trailing \`/\` for directories only.`;
+
+  return [body, ...notes].join("\n");
 }
 
 export function fenceFor(text) {
@@ -137,7 +315,7 @@ export async function loadFiles(paths, { lineNumbers = false } = {}) {
   let total = 0;
 
   for (const input of paths) {
-    const local = await resolveFilePath(input);
+    const { local } = await resolvePath(input, "file");
 
     const name = path.posix.basename(toUnix(local));
 

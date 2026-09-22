@@ -1,4 +1,4 @@
-# Dependabot の設定。npm の依存と GitHub Actions のアクションを毎週まとめて更新する。
+# Dependabot の設定。npm の依存、GitHub Actions のアクション、Docker のイメージを毎週まとめて更新する。
 # 参考: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
 #
 # labels は既定のラベル（dependencies など英語のもの）を「置き換える」。
@@ -7,7 +7,7 @@
 #
 # 確認者（reviewers）の設定は廃止された。確認を求める相手は .github/CODEOWNERS に書く。
 #
-# エントリは4つある。GitFlow に沿って版の更新は develop に向けて開くが、
+# エントリは6つある（npm、GitHub Actions、Docker のそれぞれに2つ）。GitFlow に沿って版の更新は develop に向けて開くが、
 # セキュリティ更新は常に既定ブランチに向けて開かれ、target-branch のあるエントリの設定が効かない。
 # そのため既定ブランチ向けのエントリを版の更新なし（open-pull-requests-limit: 0）で足し、
 # セキュリティ更新にも同じラベルと接頭辞が付くようにしている。
@@ -103,3 +103,36 @@ updates:
     open-pull-requests-limit: 0
     commit-message:
       prefix: 'アクションを更新:'
+
+  # ---- Docker。Dockerfile の FROM に書いたイメージ。版の更新は develop へ
+  - package-ecosystem: docker
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - Docker
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: 'イメージを更新:'
+
+  # ---- Docker。既定ブランチ向け。セキュリティ更新にラベルと接頭辞を付けるためのエントリ
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    labels:
+      - 依存関係
+      - Docker
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: 'イメージを更新:'

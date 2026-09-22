@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node index.js",
     "stdio": "node stdio.js",
+    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
     "lint": "npm run lint:md && npm run lint:ja",
     "lint:md": "markdownlint-cli2",
     "lint:md:fix": "markdownlint-cli2 --fix",
@@ -21,13 +22,13 @@
     "@modelcontextprotocol/express": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
-    "dotenv": "^16.4.7",
-    "express": "^5.1.0",
-    "zod": "^4.2.0"
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@223n/lint-config-ja": "^1.1.0",
-    "markdownlint-cli2": "^0.23.2",
+    "@223n/lint-config-ja": "^2.1.1",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "markdownlint-cli2": "^0.23.3",
     "textlint": "^15.8.0"
   },
   "overrides": {

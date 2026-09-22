@@ -22,6 +22,11 @@ function parseFileRoots(value) {
     });
 }
 
+const cfAccessTeamDomain = env.CF_ACCESS_TEAM_DOMAIN.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+
+// HTTP に認証がかかっているか。ファイルの読み込みを HTTP で許すかどうかの判断に使う
+const httpAuthConfigured = Boolean(env.MCP_AUTH_TOKEN || (cfAccessTeamDomain && env.CF_ACCESS_AUD));
+
 export const config = {
   ollamaUrl: env.OLLAMA_URL,
 
@@ -41,11 +46,18 @@ export const config = {
 
   fileRoots: parseFileRoots(env.FILE_ROOTS),
 
-  httpAllowFiles: env.HTTP_ALLOW_FILES,
+  httpAuthConfigured,
+
+  // HTTP でのファイルの読み込みは、認証がかかっているときだけ有効にする
+  httpAllowFilesRequested: env.HTTP_ALLOW_FILES,
+
+  httpAllowFiles: env.HTTP_ALLOW_FILES && httpAuthConfigured,
 
   mcpAuthToken: env.MCP_AUTH_TOKEN,
 
-  cfAccessTeamDomain: env.CF_ACCESS_TEAM_DOMAIN.replace(/^https?:\/\//, "").replace(/\/+$/, ""),
+  cfAccessTeamDomain,
 
   cfAccessAud: env.CF_ACCESS_AUD,
+
+  cfAccessAllowedEmails: env.CF_ACCESS_ALLOWED_EMAILS.map((email) => email.toLowerCase()),
 };
