@@ -23,11 +23,17 @@ ${args.context ? `\n補足情報:\n\n${args.context}` : ""}
 
       files: args.files,
 
+      inlineFiles: args.inline_files,
+
       lineNumbers: true,
 
       temperature: 0.2,
 
       maxTokens: args.max_tokens ?? 1536,
+
+      save: args.save_output ?? false,
+
+      outputName: args.output_name,
     },
     ctx,
   );

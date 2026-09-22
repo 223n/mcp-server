@@ -6,11 +6,17 @@ import { toNodeHandler } from "@modelcontextprotocol/node";
 
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
+import { withIdentity } from "./src/audit.js";
+
 import { config } from "./src/config/config.js";
 
 import { createAuthMiddleware } from "./src/http/auth.js";
 
 import { createServer } from "./src/server.js";
+
+import { initClone } from "./src/tools/git.js";
+
+import { initOutput } from "./src/tools/output.js";
 
 const logError = (error) => console.error("[mcp]", error?.message ?? error);
 
@@ -110,8 +116,31 @@ if (config.httpAllowFilesRequested && !config.httpAllowFiles) {
 
 // 2026-07-28 版（server/discover）と 2025 年版（initialize）の両方にステートレスで応答する。
 // responseMode "sse" で結果を待つ間もキープアライブを流し、Cloudflare の 100 秒制限を避ける
+// OUTPUT_DIR が実在して書けるかを起動時に確かめる。使えなければ保存のツールを出さない
+const outputUsable = await initOutput({ warn: (message) => console.warn(message) });
+
+const allowWrites = config.httpAllowWrites && outputUsable;
+
+if (config.httpAllowWritesRequested && !config.httpAllowWrites) {
+  console.warn(
+    "[output] HTTP_ALLOW_WRITES=true is ignored because HTTP has no authentication. Saving stays disabled over HTTP.",
+  );
+} else if (allowWrites) {
+  console.warn("[output] Saving model output to files is enabled over HTTP (authenticated requests only).");
+}
+
+// git のツールも同じように起動時に確かめる。
+// HTTP では local: false のため、書き込み系（git_write、github_write）は登録されない
+await initClone({ warn: (message) => console.warn(message) });
+
+if (config.gitAllowWrite || config.githubAllowWrite) {
+  console.warn(
+    "[git] GIT_ALLOW_WRITE / GITHUB_ALLOW_WRITE only take effect over stdio. HTTP never gets the write tools.",
+  );
+}
+
 const handler = createMcpHandler(
-  () => createServer({ allowFiles: config.httpAllowFiles }),
+  () => createServer({ allowFiles: config.httpAllowFiles, allowWrites, local: false }),
 
   {
     legacy: "stateless",
@@ -136,7 +165,11 @@ app.all("/mcp", (req, res) => {
     return rpcError(res, 415, -32000, "Request body must be JSON (Content-Type: application/json)");
   }
 
-  void mcp(req, res, req.body);
+  // 監査に残す識別子を、この呼び出しの間だけ持ち回る。
+  // 認証が無い構成では "anonymous" になる
+  withIdentity(req.mcpIdentity ?? "anonymous", () => {
+    void mcp(req, res, req.body);
+  });
 });
 
 root.use(app);
@@ -162,6 +195,16 @@ root.use((err, _req, res, next) => {
 const httpServer = root.listen(config.port, config.host, () => {
   console.log(`ollama-mcp listening on http://${config.host}:${config.port}/mcp`);
 });
+
+// Node の既定（300 秒）のままだと、長い生成が 408 で切られる。
+// headersTimeout は requestTimeout より短くしておく必要がある
+httpServer.requestTimeout = config.httpRequestTimeout;
+
+httpServer.headersTimeout = Math.min(60000, config.httpRequestTimeout - 1000);
+
+console.log(
+  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (OLLAMA_MAX_DURATION + 60 s)`,
+);
 
 let stopping = false;
 

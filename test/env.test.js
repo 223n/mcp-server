@@ -14,8 +14,10 @@ after(removeCreatedTrees);
 
 const envModule = pathToFileURL(path.join(ROOT, "src", "config", "env.js")).href;
 
-function load(extra) {
-  return spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(envModule)})`], {
+const configModule = pathToFileURL(path.join(ROOT, "src", "config", "config.js")).href;
+
+function load(extra, module = envModule) {
+  return spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(module)})`], {
     cwd: WORK_DIR,
 
     env: { ...cleanEnv(), ...extra },
@@ -43,3 +45,21 @@ for (const [name, extra, message] of [
     assert.match(result.stderr, message);
   });
 }
+
+for (const [name, value, message] of [
+  ["2 件並べた指定", "C:\\a=/work/a;C:\\b=/work/b", /single "hostPath=containerPath"/],
+  ["= が 2 つ以上", "C:\\a=b=/work/x", /single "hostPath=containerPath"/],
+  ["ルート", "/", /must not be empty or the filesystem root/],
+]) {
+  test(`OUTPUT_DIR を起動時に止める: ${name}`, () => {
+    const result = load({ OUTPUT_DIR: value }, configModule);
+
+    assert.notEqual(result.status, 0);
+
+    assert.match(result.stderr, message);
+  });
+}
+
+test("OUTPUT_DIR が 1 件なら読み込める", () => {
+  assert.equal(load({ OUTPUT_DIR: "C:\\out=/work/out" }, configModule).status, 0);
+});

@@ -15,8 +15,8 @@ function codeBlock(code) {
 }
 
 export async function ollamaReviewCode(args, ctx) {
-  if (!args.code && !args.files?.length) {
-    throw new Error("Either `code` or `files` is required");
+  if (!args.code && !args.files?.length && !args.inline_files?.length) {
+    throw new Error("Either `code`, `files` or `inline_files` is required");
   }
 
   const prompt = `
@@ -45,11 +45,17 @@ ${args.code ? codeBlock(args.code) : ""}
 
       files: args.files,
 
+      inlineFiles: args.inline_files,
+
       lineNumbers: true,
 
       temperature: 0.2,
 
       maxTokens: args.max_tokens ?? 1536,
+
+      save: args.save_output ?? false,
+
+      outputName: args.output_name,
     },
     ctx,
   );
