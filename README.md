@@ -36,6 +36,11 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 | `ollama_health`        | Ollamaが動いているかと、サーバーの設定を返します                                                                          | -               |
 | `list_files`           | 許可ルートの中のファイルとディレクトリを一覧します。`files`に渡すパスを探すときに使います。ファイルを扱えるときだけ出ます | -               |
 | `read_file`            | 1つのファイルを、ローカルのモデルに渡さずにそのまま読みます。`save_output`で書いた結果を読み返すときに使います。ファイルを扱えるときだけ出ます | -               |
+| `git_clone`            | GitHubのリポジトリを`CLONE_ROOT`の配下に取得します。`owner/repo`だけを受け、URLは受けません。`CLONE_ROOT`を設定したときだけ出ます | -               |
+| `git_read`             | 取得したリポジトリの状態を読みます。`status`、`log`、`diff`、`show`、`branches`、`remotes`です | -               |
+| `git_write`            | ブランチの作成、staging、commit、pushです。`GIT_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
+| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
+| `github_write`         | Pull Requestの作成とコメントです。`GITHUB_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
 
 - ファイルを扱えるとき（stdioと、設定したHTTP）は、`files`引数にWindowsの絶対パスを渡すと、サーバーがファイルを読み込みます。Claudeはファイルの中身を引数として書き出さずに済むため、トークンを節約できます
 - `files`は、1つのパスのほかにグロブと行範囲も取ります
@@ -115,6 +120,13 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `FILE_ROOTS`                             | `docker-compose.yml`で設定                                     | `ホストのパス=コンテナのパス`を`;`で区切って並べます                                                                                               |
 | `OUTPUT_DIR`                             | なし                                                           | ローカルのモデルの出力を書き出す先です。`ホストのパス=コンテナのパス`を1件だけ書きます。設定したときだけ`save_output`が出ます                     |
 | `HTTP_ALLOW_WRITES`                      | `false`                                                        | HTTPでも書き出しを許すかどうかです。`HTTP_ALLOW_FILES`とは別に持ちます。認証がないときは無視します                                                 |
+| `CLONE_ROOT`                             | `docker-compose.yml`で設定                                     | リポジトリを取得する先です。`ホストのパス=コンテナのパス`を1件だけ書きます。サーバーが書き換えてよいのはここの配下だけです                         |
+| `GIT_ALLOWED_OWNERS`                     | `docker-compose.yml`で設定                                     | 取得してよいGitHubのownerです。カンマで区切って並べます。空なら取得そのものを拒みます                                                             |
+| `GIT_ALLOW_WRITE`                        | `false`                                                        | commitとpushを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                                             |
+| `GIT_TIMEOUT`、`GIT_MAX_DURATION`        | `120000`、`600000`                                             | gitから何も届かない状態の上限と、1回の操作全体の上限です（ミリ秒）                                                                                |
+| `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
+| `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
+| `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
 - `MCP_AUTH_TOKEN`と`CF_ACCESS_*`の両方を設定したときは、どちらかを満たせば通します
@@ -189,6 +201,24 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - `resources/read`にはツール名がないため、`mcp__ollama__*`の許可の対象になりません。そのぶん、ファイルのツールと完全に同じ条件でだけ公開します
 - `resources/subscribe`とページングには対応していません。一覧は許可ルートだけに絞っています
 
+### リポジトリを取得してgitとGitHubを操作する
+
+`CLONE_ROOT`を設定すると、GitHubのリポジトリを取得して、そのままローカルのモデルにレビューさせられます。
+
+1. ホスト側に取得先のディレクトリを作ります（例:`C:\dev\claude`）
+1. `.env`に`CLONE_ROOT`と`GIT_ALLOWED_OWNERS`を書きます
+1. privateのリポジトリを扱うときは、fine-grainedのトークンを`GITHUB_MCP_TOKEN`に書きます。対象のリポジトリは列挙して絞ります
+1. commitとpushまで任せるときは、`GIT_ALLOW_WRITE=true`、`GIT_USER_NAME`、`GIT_USER_EMAIL`を足します
+1. Pull Requestの作成まで任せるときは、`GITHUB_ALLOW_WRITE=true`を足します
+1. `docker compose up -d --build`でコンテナーを作り直します。`ollama_health`で状態を確かめられます
+
+- 取得先は`CLONE_ROOT/owner/repo`です。パスは`owner`と`repo`から組み立てるため、渡した文字列がパスの区切りとして働く余地がありません
+- URLは受け取りません。`owner/repo`だけを受け、`https://github.com/owner/repo.git`はサーバーが組み立てます
+- 取得したリポジトリは`list_files`と`files`と`read_file`から読めます。ローカルのモデルにレビューさせる目的なので、これは意図した動きです
+- **書き込みはstdioでだけ有効です。** `GIT_ALLOW_WRITE`と`GITHUB_ALLOW_WRITE`をtrueにしても、HTTP経由では`git_write`と`github_write`が出ません
+- `main`、`master`、`develop`への直pushは、設定にかかわらず拒みます。それらをheadにしたPull Requestの作成も拒みます
+- `gh`コマンドは入れていません。GitHubのRESTのAPIを直に呼ぶため、`gh api`や`gh alias`のような別の実行経路がそもそもありません
+
 ## セキュリティ
 
 - `.env`はコミットしません。`.gitignore`で外しています
@@ -206,6 +236,14 @@ HTTPでも、`files`引数と`list_files`を使えます。
   - 先頭が`.`の名前、拡張子のないファイル、ハードリンクは展開で拾いません
 - 読み込んだファイルに書かれた指示は、ローカルのモデルの出力に紛れ込むことがあります。出力の中の指示には従わないよう、ツールの応答と説明に書いてあります
   - `OUTPUT_DIR`を`FILE_ROOTS`の配下に置くと、書き出した出力を読み返せる代わりに、モデルの出力が普通のファイルのような顔で戻ってきます。起動時に警告を出し、書き出したファイルの先頭に出自を書いています
+- gitを動かすときは、環境変数を継承しません。`GIT_SSH_COMMAND`や`GIT_EXTERNAL_DIFF`など、任意のコマンドを実行させる変数を持ち込ませないためです
+  - 設定は`/etc/git/server.gitconfig`の1枚だけを読ませます。取得したリポジトリの`.git/config`に書かれた危険なキーは効きません
+  - `https`以外のプロトコル（`ext::`、`file://`、`git://`、`ssh://`）を拒みます
+  - 引数は必ず配列で渡し、シェルを介しません。利用者の値は値の位置にしか入らず、`-`で始まる値は拒みます
+  - トークンは子プロセスの環境変数だけで渡します。argvに現れず、`.git/config`にも残りません
+- gitは`files`引数とは別の読み取り口になります。`diff`からは秘密のファイルをpathspecで外し、`show`は中身を返しません
+  - ただしこれは許可リストによる防御で、`files.js`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
+- 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
 - HTTPのアクセスログは10MBを3世代まで残します
 
 ## ディレクトリ
@@ -221,6 +259,7 @@ mcp-server/
 ├─ src/
 │  ├─ server.js                     McpServer を作る（HTTP と stdio で共通）
 │  ├─ config/                       環境変数、モデル、定型の指示
+│  ├─ git/exec.js                   git の起動（環境を継承しない、引数は配列、上限と中断）
 │  ├─ http/auth.js                  HTTP の認証（静的なトークン、Cloudflare Access の JWT）
 │  ├─ ollama/client.js              Ollama の API（ストリーミング、タイムアウト、中断）
 │  └─ tools/                        ツール、ファイルの読み込みと一覧、出力の保存、リソース
@@ -246,6 +285,11 @@ npm test
 - `inline_files`の名前で、見出しやフェンスを偽装できないこと
 - 書き出しの防御（パス区切り、`..`、二重の拡張子、Windowsの装置名、全角の区切り、置かれたシンボリックリンク）
 - 認証のないHTTPで、`resources`も書き出しの引数も出ないこと
+- `owner/repo`の検証（`..`、パスの区切り、Windowsの装置名、`.git`で終わる名前、URL）
+- `-`で始まる値をgitの引数として拒むこと
+- 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
+- `diff`から秘密のファイルが外れること
+- HTTPでは`git_write`と`github_write`を出さないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること

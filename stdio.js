@@ -2,13 +2,18 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { createServer } from "./src/server.js";
 
+import { initClone } from "./src/tools/git.js";
+
 import { initOutput } from "./src/tools/output.js";
 
 // OUTPUT_DIR が使えるかを先に確かめる。stdout は MCP の通信路なので、警告は stderr に出る
 const allowWrites = await initOutput();
 
+// git のツールは stdio でだけ書き込みを許す。local: true がその印
+await initClone();
+
 // stdout は MCP の通信路なので、ログは必ず stderr（console.error）に出す
-const handle = serveStdio(() => createServer({ allowFiles: true, allowWrites }), {
+const handle = serveStdio(() => createServer({ allowFiles: true, allowWrites, local: true }), {
   onerror: (error) => console.error("[mcp]", error?.message ?? error),
 });
 

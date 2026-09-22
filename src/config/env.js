@@ -73,6 +73,36 @@ export const env = {
   // 読み込みを許しただけの設定が、更新で黙って書き込みに広がらないようにする
   HTTP_ALLOW_WRITES: process.env.HTTP_ALLOW_WRITES === "true",
 
+  // リポジトリを取得する先（ホスト側パス=コンテナー内パス）。1 つだけ。
+  // サーバーが書き換えてよいのはここの配下だけで、FILE_ROOTS には書かない
+  CLONE_ROOT: process.env.CLONE_ROOT || "",
+
+  // 取得してよい GitHub の owner（カンマ区切り）。空なら取得そのものを拒む
+  GIT_ALLOWED_OWNERS: toList(process.env.GIT_ALLOWED_OWNERS || ""),
+
+  // 作業ツリーと履歴を変える操作（commit、push、ブランチの作成）を許すかどうか。
+  // 既定は false。HTTP では、この値に関わらず恒久的に使えない
+  GIT_ALLOW_WRITE: process.env.GIT_ALLOW_WRITE === "true",
+
+  // GitHub の API に使うトークン。fine-grained を想定する。
+  // 名前を GITHUB_TOKEN にしないのは、CI やシェルにたまたま存在することが多く、
+  // ホストで直に起動したときに無関係のトークンで GitHub のツールが有効になるため
+  GITHUB_MCP_TOKEN: process.env.GITHUB_MCP_TOKEN || "",
+
+  // GitHub 側を変える操作（PR の作成、コメント）を許すかどうか。
+  // 既定は false。HTTP では、この値に関わらず恒久的に使えない
+  GITHUB_ALLOW_WRITE: process.env.GITHUB_ALLOW_WRITE === "true",
+
+  // git の子プロセスが何も出さない状態の上限と、1 回の操作全体の上限
+  GIT_TIMEOUT: toInt("GIT_TIMEOUT", 120000, 1000, MAX_TIMER_MS),
+
+  GIT_MAX_DURATION: toInt("GIT_MAX_DURATION", 600000, 1000, MAX_TIMER_MS),
+
+  // commit に使う名前とメールアドレス
+  GIT_USER_NAME: process.env.GIT_USER_NAME || "",
+
+  GIT_USER_EMAIL: process.env.GIT_USER_EMAIL || "",
+
   // HTTP の認証。どちらかを設定すると、満たさないリクエストは 401 になる
   MCP_AUTH_TOKEN: process.env.MCP_AUTH_TOKEN || "",
 

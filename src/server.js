@@ -47,7 +47,7 @@ function toContent(result) {
 }
 
 // HTTP では 1 リクエストごと、stdio では 1 接続ごとに呼ばれるファクトリ
-export function createServer({ allowFiles = false, allowWrites = false } = {}) {
+export function createServer({ allowFiles = false, allowWrites = false, local = false } = {}) {
   const server = new McpServer(
     {
       name: "ollama-mcp",
@@ -70,7 +70,7 @@ export function createServer({ allowFiles = false, allowWrites = false } = {}) {
     registerFileResources(server);
   }
 
-  for (const tool of buildTools({ allowFiles, allowWrites })) {
+  for (const tool of buildTools({ allowFiles, allowWrites, local })) {
     server.registerTool(
       tool.name,
 

@@ -39,6 +39,22 @@ services:
       OUTPUT_DIR: ${OUTPUT_DIR:-}
       # HTTP でも保存を許すかどうか。HTTP_ALLOW_FILES とは別に持ち、既定は false
       HTTP_ALLOW_WRITES: ${HTTP_ALLOW_WRITES:-false}
+      # リポジトリを取得する先。サーバーが書き換えてよいのはここの配下だけ。
+      # C:\dev 全体ではなく専用のサブディレクトリにして、既存のプロジェクトを触らせない
+      CLONE_ROOT: ${CLONE_ROOT:-C:\dev\claude=/work/dev/claude}
+      # 取得してよい GitHub の owner（カンマ区切り）。空なら取得そのものを拒む
+      GIT_ALLOWED_OWNERS: ${GIT_ALLOWED_OWNERS:-223n}
+      # commit と push を許すかどうか。stdio でだけ効き、HTTP では常に無効
+      GIT_ALLOW_WRITE: ${GIT_ALLOW_WRITE:-false}
+      GIT_TIMEOUT: ${GIT_TIMEOUT:-120000}
+      GIT_MAX_DURATION: ${GIT_MAX_DURATION:-600000}
+      GIT_USER_NAME: ${GIT_USER_NAME:-}
+      GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+      # GitHub の API のトークン。GITHUB_TOKEN という名前は、
+      # CI やシェルにたまたま存在して意図せず有効になるため使わない
+      GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:-}
+      # PR の作成とコメントを許すかどうか。stdio でだけ効き、HTTP では常に無効
+      GITHUB_ALLOW_WRITE: ${GITHUB_ALLOW_WRITE:-false}
 
     volumes:
       # C:/dev は読み書き可能。OUTPUT_DIR への書き出しと、今後のリポジトリの取得に使う。

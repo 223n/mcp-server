@@ -443,6 +443,71 @@ describe("認証つきで HTTP_ALLOW_WRITES=true にしたとき", () => {
   });
 });
 
+describe("HTTP では git と GitHub の書き込みを出さない", () => {
+  let server;
+
+  let cloneRoot;
+
+  before(async () => {
+    cloneRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-http-clone-")));
+
+    server = await startHttpServer({
+      OLLAMA_URL: "http://127.0.0.1:9",
+
+      MCP_AUTH_TOKEN: "test-token",
+
+      CLONE_ROOT: cloneRoot,
+
+      GIT_ALLOWED_OWNERS: "223n",
+
+      // 書き込みを明示的に許した設定でも、HTTP には出てはいけない
+      GIT_ALLOW_WRITE: "true",
+
+      GITHUB_MCP_TOKEN: "test-token",
+
+      GITHUB_ALLOW_WRITE: "true",
+    });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    rmSync(cloneRoot, { recursive: true, force: true });
+  });
+
+  test("読み取りは出すが、書き込みは出さない", async () => {
+    assert.match(server.output(), /only take effect over stdio/);
+
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+
+      assert.ok(names.includes("git_clone"), names.join(", "));
+
+      assert.ok(names.includes("git_read"));
+
+      assert.ok(names.includes("github_read"));
+
+      assert.ok(!names.includes("git_write"), names.join(", "));
+
+      assert.ok(!names.includes("github_write"));
+
+      // 登録していないので、呼び出しはツールが見つからないところで失敗する
+      await assert.rejects(
+        client.callTool({
+          name: "git_write",
+
+          arguments: { repo: "223n/x", op: "push", branch: "feature/y" },
+        }),
+        /git_write not found/,
+      );
+    } finally {
+      await client.close();
+    }
+  });
+});
+
 describe("タイムアウト", () => {
   let ollama;
 

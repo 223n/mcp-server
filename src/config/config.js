@@ -22,9 +22,9 @@ function parseFileRoots(value) {
     });
 }
 
-// OUTPUT_DIR は 1 件だけ。"=" を 2 つ以上書いたものや ";" で並べたものは、
+// 書き込み先のルートは 1 件だけ。"=" を 2 つ以上書いたものや ";" で並べたものは、
 // 意図した場所と違うところへ書く事故になるため受け取らない
-function parseOutputDir(value) {
+function parseSingleRoot(value, name) {
   const entry = value.trim();
 
   if (!entry) {
@@ -32,7 +32,7 @@ function parseOutputDir(value) {
   }
 
   if (entry.includes(";") || entry.split("=").length > 2) {
-    throw new Error('OUTPUT_DIR must be a single "hostPath=containerPath" entry');
+    throw new Error(`${name} must be a single "hostPath=containerPath" entry`);
   }
 
   const [hostPath, localPath = hostPath] = entry.split("=");
@@ -40,7 +40,7 @@ function parseOutputDir(value) {
   const local = toUnixPath(localPath);
 
   if (!local || local === "") {
-    throw new Error("OUTPUT_DIR must not be empty or the filesystem root");
+    throw new Error(`${name} must not be empty or the filesystem root`);
   }
 
   return {
@@ -81,7 +81,25 @@ export const config = {
 
   httpAllowFiles: env.HTTP_ALLOW_FILES && httpAuthConfigured,
 
-  outputDir: parseOutputDir(env.OUTPUT_DIR),
+  outputDir: parseSingleRoot(env.OUTPUT_DIR, "OUTPUT_DIR"),
+
+  cloneRoot: parseSingleRoot(env.CLONE_ROOT, "CLONE_ROOT"),
+
+  gitAllowedOwners: env.GIT_ALLOWED_OWNERS.map((owner) => owner.toLowerCase()),
+
+  gitAllowWrite: env.GIT_ALLOW_WRITE,
+
+  gitTimeout: env.GIT_TIMEOUT,
+
+  gitMaxDuration: env.GIT_MAX_DURATION,
+
+  gitUserName: env.GIT_USER_NAME,
+
+  gitUserEmail: env.GIT_USER_EMAIL,
+
+  githubToken: env.GITHUB_MCP_TOKEN,
+
+  githubAllowWrite: env.GITHUB_ALLOW_WRITE,
 
   // 書き出しは読み込みとは別の条件にする。HTTP_ALLOW_FILES=true だけでは書けない
   httpAllowWritesRequested: env.HTTP_ALLOW_WRITES,

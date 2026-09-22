@@ -12,6 +12,8 @@ import { createAuthMiddleware } from "./src/http/auth.js";
 
 import { createServer } from "./src/server.js";
 
+import { initClone } from "./src/tools/git.js";
+
 import { initOutput } from "./src/tools/output.js";
 
 const logError = (error) => console.error("[mcp]", error?.message ?? error);
@@ -125,8 +127,18 @@ if (config.httpAllowWritesRequested && !config.httpAllowWrites) {
   console.warn("[output] Saving model output to files is enabled over HTTP (authenticated requests only).");
 }
 
+// git のツールも同じように起動時に確かめる。
+// HTTP では local: false のため、書き込み系（git_write、github_write）は登録されない
+await initClone({ warn: (message) => console.warn(message) });
+
+if (config.gitAllowWrite || config.githubAllowWrite) {
+  console.warn(
+    "[git] GIT_ALLOW_WRITE / GITHUB_ALLOW_WRITE only take effect over stdio. HTTP never gets the write tools.",
+  );
+}
+
 const handler = createMcpHandler(
-  () => createServer({ allowFiles: config.httpAllowFiles, allowWrites }),
+  () => createServer({ allowFiles: config.httpAllowFiles, allowWrites, local: false }),
 
   {
     legacy: "stateless",
