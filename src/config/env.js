@@ -71,4 +71,7 @@ export const env = {
   CF_ACCESS_TEAM_DOMAIN: process.env.CF_ACCESS_TEAM_DOMAIN || "",
 
   CF_ACCESS_AUD: process.env.CF_ACCESS_AUD || "",
+
+  // 設定すると、Access の JWT の email がこの一覧にある人だけを通す（カンマ区切り）
+  CF_ACCESS_ALLOWED_EMAILS: toList(process.env.CF_ACCESS_ALLOWED_EMAILS || ""),
 };

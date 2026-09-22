@@ -89,6 +89,14 @@ if (auth) {
   );
 }
 
+if (config.httpAllowFilesRequested && !config.httpAllowFiles) {
+  console.warn(
+    "[files] HTTP_ALLOW_FILES=true is ignored because HTTP has no authentication. File tools stay disabled over HTTP.",
+  );
+} else if (config.httpAllowFiles) {
+  console.warn("[files] File tools are enabled over HTTP (authenticated requests only).");
+}
+
 // 2026-07-28 版（server/discover）と 2025 年版（initialize）の両方にステートレスで応答する。
 // responseMode "sse" で結果を待つ間もキープアライブを流し、Cloudflare の 100 秒制限を避ける
 const handler = createMcpHandler(

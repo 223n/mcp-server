@@ -36,12 +36,13 @@ async function loadKeys({ force = false } = {}) {
 
 const decode = (part) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 
-// Cloudflare Access がオリジンに付ける Cf-Access-Jwt-Assertion を検証する
+// Cloudflare Access がオリジンに付ける Cf-Access-Jwt-Assertion を検証する。
+// 正しければ中身（payload）を、そうでなければ null を返す
 export async function verifyAccessJwt(token) {
   const parts = token.split(".");
 
   if (parts.length !== 3) {
-    return false;
+    return null;
   }
 
   const header = decode(parts[0]);
@@ -49,7 +50,7 @@ export async function verifyAccessJwt(token) {
   const payload = decode(parts[1]);
 
   if (header.alg !== "RS256") {
-    return false;
+    return null;
   }
 
   let key = (await loadKeys()).get(header.kid);
@@ -59,7 +60,7 @@ export async function verifyAccessJwt(token) {
   }
 
   if (!key) {
-    return false;
+    return null;
   }
 
   const signed = verify(
@@ -70,19 +71,32 @@ export async function verifyAccessJwt(token) {
   );
 
   if (!signed) {
-    return false;
+    return null;
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
 
-  return (
+  const valid =
     audiences.includes(config.cfAccessAud) &&
     payload.iss === `https://${config.cfAccessTeamDomain}` &&
     typeof payload.exp === "number" &&
     payload.exp > now - 60 &&
-    (payload.nbf === undefined || payload.nbf <= now + 60)
+    (payload.nbf === undefined || payload.nbf <= now + 60);
+
+  return valid ? payload : null;
+}
+
+// CF_ACCESS_ALLOWED_EMAILS が空なら全員、設定があれば一覧にある email だけを通す
+function isAllowedIdentity(payload) {
+  if (config.cfAccessAllowedEmails.length === 0) {
+    return true;
+  }
+
+  return (
+    typeof payload.email === "string" &&
+    config.cfAccessAllowedEmails.includes(payload.email.toLowerCase())
   );
 }
 
@@ -114,8 +128,16 @@ export function createAuthMiddleware() {
 
       const assertion = req.headers["cf-access-jwt-assertion"];
 
-      if (accessEnabled && typeof assertion === "string" && (await verifyAccessJwt(assertion))) {
-        return next();
+      if (accessEnabled && typeof assertion === "string") {
+        const payload = await verifyAccessJwt(assertion);
+
+        if (payload && isAllowedIdentity(payload)) {
+          return next();
+        }
+
+        if (payload) {
+          console.error("[auth] Access identity is not in CF_ACCESS_ALLOWED_EMAILS");
+        }
       }
     } catch (error) {
       console.error("[auth]", error.message);
