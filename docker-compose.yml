@@ -12,6 +12,11 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+    # Docker Engine の設定で dns を指定すると、コンテナーの中で host.docker.internal を引けなくなる。
+    # 名前解決に頼らず、ホストの IP を hosts に書いて Ollama に届くようにする
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     # .env は値の差し込みにだけ使い、サーバーが使う変数だけを渡す
     # （.env の他の値、たとえば Cloudflare の Service Token をコンテナに入れない）
     environment:
