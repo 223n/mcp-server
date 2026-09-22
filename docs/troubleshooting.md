@@ -13,7 +13,7 @@ Cloudflare Accessを外したつもりでも、claude.aiのコネクタが認証
 curl.exe -i -X POST https://mcp.223n.tech/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"curl\",\"version\":\"0\"}}}'
 ```
 
-応答の形で、401を返しているものが分かります。
+応答の形で、401を返しているものがわかります。
 
 | 応答                                                                                         | 返しているもの                                            |
 |----------------------------------------------------------------------------------------------|-----------------------------------------------------------|
@@ -22,7 +22,7 @@ curl.exe -i -X POST https://mcp.223n.tech/mcp -H "Content-Type: application/json
 | 401で、本文が`{"jsonrpc":"2.0","error":{"code":-32001,"message":"Unauthorized"},...}`        | このサーバーの認証（`MCP_AUTH_TOKEN`か`CF_ACCESS_*`）     |
 | 403で、本文がJSON-RPCのエラー                                                                | このサーバーの`Host`か`Origin`の確かめ（`ALLOWED_HOSTS`） |
 
-リクエストがサーバーまで届いたかは、`docker logs ollama-mcp`のアクセスログで分かります。
+リクエストがサーバーまで届いたかは、`docker logs ollama-mcp`のアクセスログでわかります。
 cloudflaredのメトリクス（`http://127.0.0.1:20241/metrics`の`cloudflared_tunnel_total_requests`）が増えていなければ、トンネルの手前で止まっています。
 
 ### 実際に起きたこと

@@ -13,7 +13,7 @@
 | `package.json`                                   | 検査に使う道具の依存です。版もここで管理します                                                                      |
 | `.github/labels.yml`                             | IssueとPull Requestのラベルの定義です。すべて日本語です                                                             |
 | `.github/labeler.yml`                            | Pull Requestに、変えたファイルやブランチ名からラベルを付ける規則です                                                |
-| `.github/dependabot.yml`                         | Dependabotの設定です。npmとGitHub Actionsを毎週まとめて更新します                                                   |
+| `.github/dependabot.yml`                         | Dependabotの設定です。npm、GitHub Actions、Dockerのイメージを毎週まとめて更新します                                 |
 | `.github/release.yml`                            | GitHub Releaseの本文を自動で作るときの分類です                                                                      |
 | `.github/ISSUE_TEMPLATE/`                        | Issueのフォームです。バグ報告、機能の要望、質問の3つがあります                                                      |
 | `.github/pull_request_template.md`               | Pull Requestのテンプレートです                                                                                      |
@@ -220,12 +220,13 @@ IssueとPull Requestのラベルはすべて日本語です。
 | 依存関係         | 依存パッケージやアクションの更新        | Dependabot、ラベラー   |
 | npm              | npmパッケージの更新                     | Dependabot             |
 | GitHub Actions   | GitHub Actionsの更新                    | Dependabot、ラベラー   |
+| Docker           | Dockerのイメージや設定の更新            | Dependabot、ラベラー   |
 | リリース         | リリースの準備と公開                    | リリースのワークフロー |
 | セキュリティ     | 脆弱性やセキュリティに関わる修正        | 人、ラベラー           |
 | 破壊的変更       | 後方互換性を壊す変更                    | 人                     |
 
 GitHubが最初から用意する英語のラベル（`bug`や`enhancement`など）は、付いているIssueを保ったまま日本語のラベルに改名されます。
-Dependabotが作る既定のラベル（`dependencies`、`javascript`、`github_actions`）も同じように改名されます。
+Dependabotが作る既定のラベル（`dependencies`、`javascript`、`github_actions`、`docker`）も同じように改名されます。
 対応は`.github/labels.yml`の`from_name`にあります。
 
 「初心者向け」と「助けが必要」は、GitHubの「Contribute」ページが英語名の`good first issue`と`help wanted`で判定するため、改名するとそこには載らなくなります。
@@ -235,10 +236,11 @@ Pull Requestには、変えたファイルとブランチ名から`.github/label
 
 ## Dependabot
 
-`.github/dependabot.yml`で、npmの依存とGitHub Actionsのアクションを毎週月曜の朝に確かめます。
+`.github/dependabot.yml`で、npmの依存、GitHub Actionsのアクション、`Dockerfile`の土台のイメージを毎週月曜の朝に確かめます。
 Pull Requestは`develop`に向けて開かれ、「依存関係」と「npm」または「GitHub Actions」のラベルが付きます。
 npmではminorとpatchの更新が本番用と開発用の2つのPull Requestにまとまり、majorの更新は個別に開かれます。
 GitHub Actionsのアクションは、majorも含めてすべて1つのPull Requestにまとまります。
+Dockerのイメージは、版とダイジェストの両方を更新するPull Requestが開かれ、「Docker」のラベルが付きます。
 
 ワークフローが使うアクションはコミットSHAで固定し、版はコメントに書いてあります。
 DependabotはSHAとコメントの両方を更新します。
@@ -309,21 +311,22 @@ Windowsでは`.\scripts\setup.ps1 -RunsOn ラベル`です。
 変数が存在しないときは`ubuntu-latest`に倒れるため、設定しなくても動きます。
 
 セルフホストのランナーには、`git`と`gh`（GitHub CLI）、Dockerが要ります。
-Dockerはzizmorの検査（コンテナーで動きます）に使います。
+Dockerはzizmorの検査（コンテナーで動きます）と、CIの「Dockerイメージの確認」に使います。
+この確認はホストのポートを使わず、コンテナーの名前も実行ごとに変えるため、ほかの実行とぶつかりません。
 Nodeはワークフローが用意します。
 公開リポジトリでセルフホストのランナーを使うと、フォークからのPull Requestで任意のコードが動くため、非公開のリポジトリで使ってください。
 
 ## ワークフローの一覧
 
-| ファイル              | いつ動くか                                                       | 何をするか                                                                                 |
-|-----------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します |
-| `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます     |
-| `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                     |
-| `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                             |
-| `branch-guard.yml`    | Pull Requestを開いたとき、更新したとき                           | headブランチが`main`か`develop`なら失敗します。マージは止めません                          |
-| `release.yml`         | 手動                                                             | `develop`からリリースブランチを切り、版を上げ、`main`へのPull Requestを開きます            |
-| `release-publish.yml` | `release/*`か`hotfix/*`のPull Requestが`main`にマージされたとき  | タグを打ち、GitHub Releaseを作り、`main`を`develop`に戻します                              |
+| ファイル              | いつ動くか                                                       | 何をするか                                                                                                                                                  |
+|-----------------------|------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22と26）と、Dockerのイメージの確認もします |
+| `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます                                                                      |
+| `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                                                                                      |
+| `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                                                                                              |
+| `branch-guard.yml`    | Pull Requestを開いたとき、更新したとき                           | headブランチが`main`か`develop`なら失敗します。マージは止めません                                                                                           |
+| `release.yml`         | 手動                                                             | `develop`からリリースブランチを切り、版を上げ、`main`へのPull Requestを開きます                                                                             |
+| `release-publish.yml` | `release/*`か`hotfix/*`のPull Requestが`main`にマージされたとき  | タグを打ち、GitHub Releaseを作り、`main`を`develop`に戻します                                                                                               |
 
 ## 履歴が繋がっていないとき
 
