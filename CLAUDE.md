@@ -87,14 +87,28 @@ gh api --method POST "repos/OWNER/REPO/git/refs" -f "ref=refs/heads/develop" -f 
 - Pull Requestはマージコミット（Create a merge commit）でマージします
 - 変更したら`npm run lint`を通します
 
+## TypeScriptの決まり
+
+ソースはTypeScriptです。
+ビルドはせず、Nodeが`.ts`から型を取り除いてそのまま実行します。
+詳しくは[README.md](README.md)の「TypeScript」にあります。
+
+- `import`には実行時と同じ綴りを書きます。`./files.ts`であって`./files.js`ではありません
+- 型だけを取り込むときは`import type`と書きます。こう書かないとNodeが値の取り込みと区別できず、実行時に壊れます
+- `enum`、`namespace`、コンストラクターのパラメータープロパティは使えません。取り除くだけでは消えないためです
+- 変えたら`npm run typecheck`を通します。実行時は型を見ないため、型の誤りはここでしか見つかりません
+- `any`を足して型のエラーを黙らせないでください。外から来る値は`unknown`で受け、使う前に確かめます
+- 複数のファイルで使う型は`src/types.ts`に置きます。MCPの通信で使う形はSDKの型をそのまま使い、写しません
+- ツールの引数の型（`GitReadArgs`など）を変えたら、`src/tools/index.ts`の`inputSchema`も同じ形に直します。片方だけを変えると、検証と型が黙ってずれます
+
 ## このサーバーの決まり
 
 - stdioで動くとき、標準出力はMCPの通信路です。ログは`console.error`で標準エラーに出します。`console.log`を足すと通信が壊れます
 - `.env`はコミットしません。`.gitignore`で外しています
-- `src/tools/files.js`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
-- 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、文書の検査の道具は`devDependencies`に入れます
-- サーバーを変えたら`npm test`を通します。Ollamaの代わりに`test/helpers/mock-ollama.js`を使うため、GPUは要りません。振る舞いを足したら試験も足します
+- `src/tools/files.ts`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
+- 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、型と文書の検査の道具（`typescript`、`@types/*`など）は`devDependencies`に入れます。イメージに`typescript`は入りませんが、型を取り除くのはNode自身なので問題ありません
+- サーバーを変えたら`npm test`を通します。Ollamaの代わりに`test/helpers/mock-ollama.ts`を使うため、GPUは要りません。振る舞いを足したら試験も足します
 - 試験の中でサーバーを起動するときは、作業ディレクトリを一時ディレクトリにします。手元の`.env`を読ませないためです
 - 変えたあとは`docker compose up -d --build`で作り直し、`curl.exe http://127.0.0.1:3000/healthz`と、stdioの`initialize`の応答を確かめます
-- HTTPでファイルを読めるのは、認証を設定したときだけです。この条件（`src/config/config.js`の`httpAllowFiles`）を外さないでください
+- HTTPでファイルを読めるのは、認証を設定したときだけです。この条件（`src/config/config.ts`の`httpAllowFiles`）を外さないでください
 - ツールの名前（`ollama_chat`など）は変えないでください。Claudeの側の許可（`mcp__ollama__*`）とサブエージェントの定義が名前を使っています

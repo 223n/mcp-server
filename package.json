@@ -1,18 +1,19 @@
 {
   "name": "mcp-server",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "description": "ローカルの Ollama を MCP サーバーとして公開し、Claude から作業を任せられるようにする。",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
-    "start": "node index.js",
-    "stdio": "node stdio.js",
-    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
-    "lint": "npm run lint:md && npm run lint:ja",
+    "start": "node index.ts",
+    "stdio": "node stdio.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-timeout=60000 \"test/*.test.ts\"",
+    "lint": "npm run typecheck && npm run lint:md && npm run lint:ja",
     "lint:md": "markdownlint-cli2",
     "lint:md:fix": "markdownlint-cli2 --fix",
     "lint:ja": "textlint .",
@@ -28,8 +29,11 @@
   "devDependencies": {
     "@223n/lint-config-ja": "^2.1.1",
     "@modelcontextprotocol/client": "^2.0.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.2",
     "markdownlint-cli2": "^0.23.3",
-    "textlint": "^15.8.0"
+    "textlint": "^15.8.0",
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "smol-toml": "^1.7.1"

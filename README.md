@@ -8,14 +8,14 @@
 
 | 入口                                               | 用途                                                              | ファイルの読み込み                                          | 出力の保存                                                   |
 |----------------------------------------------------|-------------------------------------------------------------------|-------------------------------------------------------------|--------------------------------------------------------------|
-| stdio（`docker exec -i ollama-mcp node stdio.js`） | 同じPCのClaude CodeとClaude Desktopから使います。こちらを勧めます | 使えます（`FILE_ROOTS`の配下だけ）                          | `OUTPUT_DIR`を設定したときだけ使えます                       |
+| stdio（`docker exec -i ollama-mcp node stdio.ts`） | 同じPCのClaude CodeとClaude Desktopから使います。こちらを勧めます | 使えます（`FILE_ROOTS`の配下だけ）                          | `OUTPUT_DIR`を設定したときだけ使えます                       |
 | HTTP（`POST /mcp`、ポート3000）                    | Cloudflare Tunnelを通して、claude.aiなどから使います              | `HTTP_ALLOW_FILES=true`と認証を両方設定したときだけ使えます | `HTTP_ALLOW_WRITES=true`と認証と`OUTPUT_DIR`が要ります       |
 
 ## 構成
 
 ```text
 [ローカル]
-Claude Code / Claude Desktop ──stdio──> docker exec ollama-mcp node stdio.js ──> Ollama（ホストの11434番）
+Claude Code / Claude Desktop ──stdio──> docker exec ollama-mcp node stdio.ts ──> Ollama（ホストの11434番）
 
 [リモート]
 claude.ai ──HTTPS──> Cloudflare Access ──> Cloudflare Tunnel ──> 127.0.0.1:3000/mcp ──> Ollama
@@ -79,7 +79,7 @@ docker compose up -d --build
   "mcpServers": {
     "ollama": {
       "command": "docker",
-      "args": ["exec", "-i", "ollama-mcp", "node", "stdio.js"]
+      "args": ["exec", "-i", "ollama-mcp", "node", "stdio.ts"]
     }
   }
 }
@@ -88,7 +88,7 @@ docker compose up -d --build
 Claude Codeだけで使う場合は、次のコマンドでも登録できます。
 
 ```powershell
-claude mcp add --scope user ollama -- docker exec -i ollama-mcp node stdio.js
+claude mcp add --scope user ollama -- docker exec -i ollama-mcp node stdio.ts
 ```
 
 ### サブエージェントを入れる
@@ -301,7 +301,7 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
   - 引数は必ず配列で渡し、シェルを介しません。利用者の値は値の位置にしか入らず、`-`で始まる値は拒みます
   - トークンは子プロセスの環境変数だけで渡します。argvに現れず、`.git/config`にも残りません
 - gitは`files`引数とは別の読み取り口になります。`diff`からは秘密のファイルをpathspecで外し、`show`は中身を返しません
-  - ただしこれは許可リストによる防御で、`files.js`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
+  - ただしこれは許可リストによる防御で、`files.ts`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
 - 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
 - ツールの呼び出しは監査ログに残します。中身は出しませんが、ファイルのパスと操作の種類は残します
 - HTTPのアクセスログは10MBを3世代まで残します
@@ -314,22 +314,64 @@ mcp-server/
 ├─ docs/                            運用の手引きとトラブルシューティング
 ├─ docker-compose.yml
 ├─ Dockerfile
-├─ index.js                         HTTP の入口
-├─ stdio.js                         stdio の入口
+├─ tsconfig.json                    型の検査の設定（成果物は作らない）
+├─ index.ts                         HTTP の入口
+├─ stdio.ts                         stdio の入口
 ├─ src/
-│  ├─ server.js                     McpServer を作る（HTTP と stdio で共通）
+│  ├─ server.ts                     McpServer を作る（HTTP と stdio で共通）
+│  ├─ types.ts                      複数のファイルで共有する型
 │  ├─ config/                       環境変数、モデル、定型の指示
-│  ├─ git/exec.js                   git の起動（環境を継承しない、引数は配列、上限と中断）
-│  ├─ http/auth.js                  HTTP の認証（静的なトークン、Cloudflare Access の JWT）
-│  ├─ ollama/client.js              Ollama の API（ストリーミング、タイムアウト、中断）
+│  ├─ git/exec.ts                   git の起動（環境を継承しない、引数は配列、上限と中断）
+│  ├─ http/auth.ts                  HTTP の認証（静的なトークン、Cloudflare Access の JWT）
+│  ├─ ollama/client.ts              Ollama の API（ストリーミング、タイムアウト、中断）
 │  └─ tools/                        ツール、ファイルの読み込みと一覧、出力の保存、リソース
 └─ test/                            試験（Ollama の代わりに試験用のサーバーを使う）
 ```
 
+## TypeScript
+
+ソースはTypeScriptで書きます。
+ビルドはしません。
+Nodeが`.ts`から型を取り除いてそのまま実行します（型の剥がし）。
+そのため`dist/`のような成果物はなく、`node index.ts`と`node stdio.ts`が本番の起動コマンドです。
+
+この方法にはNode 22.18以上が要ります。
+`package.json`の`engines`がその下限を書いています。
+Dockerのイメージが使うのはNode 26です。
+
+### 型を検査する
+
+Nodeは型を取り除くだけで、型が合っているかは見ません。
+型の誤りが見つかるのは次のコマンドだけです。
+
+```bash
+npm run typecheck
+```
+
+`npm run lint`にも入っています。
+CIでは「型の検査」ジョブが同じことをします。
+
+### 書き方の決まり
+
+設定は`tsconfig.json`にあり、次の3つが書き方を縛ります。
+
+| 設定                    | 何を縛るか                                                                                                  |
+|-------------------------|-------------------------------------------------------------------------------------------------------------|
+| `allowImportingTsExtensions` | `import`には実行時と同じ綴りを書きます（`./files.ts`であって`./files.js`ではありません）                |
+| `verbatimModuleSyntax`  | 型だけを取り込むときは`import type`と書きます。こう書かないとNodeが値の取り込みと区別できません              |
+| `erasableSyntaxOnly`    | `enum`、`namespace`、コンストラクターのパラメータープロパティは使えません。取り除くだけでは消えないためです |
+
+`strict`と`noUncheckedIndexedAccess`を有効にしています。
+`arr[0]`や`obj[key]`の型には`undefined`が入ります。
+取り出した値は、そのまま使わずに確かめてください。
+
+複数のファイルで使う型は`src/types.ts`に置きます。
+MCPの通信で使う形は写さず、SDKの型（`@modelcontextprotocol/server`）をそのまま使います。
+
 ## 試験
 
 `npm test`で試験します。
-Ollamaの代わりに試験用のサーバー（`test/helpers/mock-ollama.js`）を使うため、GPUとOllamaは要りません。
+Ollamaの代わりに試験用のサーバー（`test/helpers/mock-ollama.ts`）を使うため、GPUとOllamaは要りません。
 
 ```bash
 npm install
@@ -369,7 +411,10 @@ CIは、Node 22と26で試験し、Dockerのイメージを作って起動した
 ブランチの運用、リリース、ラベル、ワークフローは[docs/repository-operations.md](docs/repository-operations.md)にあります。
 変更の進め方は[CONTRIBUTING.md](CONTRIBUTING.md)にあります。
 
-文書を変えたら、`npm run lint`で日本語の書き方を確かめます。
+変更したら`npm run lint`を通します。
+型の検査（`tsc --noEmit`）、Markdownの書式、日本語の書き方をまとめて確かめます。
+文書だけを変えたときも型の検査が先に走ります。
+ここで落ちたら`npm run typecheck`を単体で実行し、どちらの検査が落ちたかを切り分けてください。
 
 ```bash
 npm install

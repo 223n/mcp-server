@@ -45,7 +45,7 @@
 | リポジトリの管理者権限           | スクリプトが変える設定は、どれも管理者権限が要ります                                   |
 | `gh`（GitHub CLI）とログイン     | 設定の変更とPull Requestの作成に使います。先に`gh auth login`を済ませます              |
 | `git`の`user.name`と`user.email` | スクリプトが名前の書き換えをコミットします                                             |
-| Node 22以上                      | 文書の検査（`npm run lint`）に使います。`scripts/setup.sh`は名前の書き換えにも使います |
+| Node 22.18以上                   | 型と文書の検査（`npm run lint`）に使います。`scripts/setup.sh`は名前の書き換えにも使います     |
 | PowerShell 7以上                 | Windowsで`scripts/setup.ps1`を使う場合です。Windows PowerShell 5.1では動きません       |
 
 `scripts/setup.ps1`は、名前の書き換えにNodeを使いません。
@@ -179,12 +179,14 @@ Markdownの書式を`markdownlint`で、日本語の書き方を`textlint`で検
 
 ```bash
 npm install
-npm run lint          # 書式と日本語をまとめて検査する
+npm run lint          # 型と書式と日本語をまとめて検査する
 npm run lint:md:fix   # 書式の指摘を直す
 npm run lint:ja:fix   # 日本語の指摘のうち、機械的に直せるものを直す
 ```
 
-Node 22以上が要ります。
+Node 22.18以上が要ります。
+`package.json`の`engines`がその下限です。
+このリポジトリは`.ts`を型を剥がしてそのまま動かすため、その版を下限にしています。
 
 文体は「ですます調」です。
 「である調」にしたい場合や、規則を一部だけ変えたい場合は、`.textlintrc.js`のコメントに書き方があります。
@@ -320,7 +322,7 @@ Nodeはワークフローが用意します。
 
 | ファイル              | いつ動くか                                                       | 何をするか                                                                                                                                                  |
 |-----------------------|------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22と26）と、Dockerのイメージの確認もします |
+| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、TypeScriptの型（`tsc --noEmit`）、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22と26）と、Dockerのイメージの確認もします |
 | `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます                                                                      |
 | `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                                                                                      |
 | `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                                                                                              |
