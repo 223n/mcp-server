@@ -85,7 +85,13 @@ test("パスが多いときは件数を添えて切る", () => {
 test("長い値は切り詰める", () => {
   const fields = auditFields({ output_name: "a".repeat(500) });
 
-  assert.ok(String(fields.output_name).length <= 201, String(String(fields.output_name).length));
+  const name = fields.output_name;
+
+  // 文字列であることを先に確かめる。
+  // String() で包むと、値が丸ごと落ちたときも "undefined" の 9 文字になって通ってしまう
+  assert.ok(typeof name === "string", `output_name が文字列ではありません: ${String(name)}`);
+
+  assert.ok(name.length <= 201, String(name.length));
 });
 
 test("inline_files は件数だけにする", () => {

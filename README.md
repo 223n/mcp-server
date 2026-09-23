@@ -411,7 +411,10 @@ CIは、Node 22と26で試験し、Dockerのイメージを作って起動した
 ブランチの運用、リリース、ラベル、ワークフローは[docs/repository-operations.md](docs/repository-operations.md)にあります。
 変更の進め方は[CONTRIBUTING.md](CONTRIBUTING.md)にあります。
 
-文書を変えたら、`npm run lint`で日本語の書き方を確かめます。
+変更したら`npm run lint`を通します。
+型の検査（`tsc --noEmit`）、Markdownの書式、日本語の書き方をまとめて確かめます。
+文書だけを変えたときも型の検査が先に走ります。
+ここで落ちたら`npm run typecheck`を単体で実行し、どちらの検査が落ちたかを切り分けてください。
 
 ```bash
 npm install

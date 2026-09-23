@@ -25,7 +25,7 @@
 
     // 検査を厳しくする。
     // noUncheckedIndexedAccess は、arr[0] や obj[key] が undefined になりうることを型に出す。
-    // src/tools/files.js のパスの分解のように、添字で取り出す箇所が多いため入れている
+    // src/tools/files.ts のパスの分解のように、添字で取り出す箇所が多いため入れている
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
