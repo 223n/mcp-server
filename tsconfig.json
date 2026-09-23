@@ -1,0 +1,49 @@
+{
+  // 型は検査だけに使い、成果物は作らない。
+  // Node は .ts をそのまま動かせる（型剥がし）ため、dist/ は要らない。
+  // 詳しくは README.md の「TypeScript」を見てください
+  "compilerOptions": {
+    // Node 22 以上で動かす。ダウンレベルの変換はしないので、実行する Node に合わせる
+    "target": "es2024",
+    "lib": ["es2024"],
+
+    // package.json の "type": "module" に合わせ、Node の解決規則をそのまま使う
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    // Node の型剥がしは「消すだけ」で、変換はしない。
+    // enum、namespace、パラメータープロパティのような、消すだけでは済まない書き方を禁じる
+    "erasableSyntaxOnly": true,
+
+    // 型だけの import を `import type` と書かせる。
+    // こう書かないと、Node が値の import と見分けられず、実行時に解決できない
+    "verbatimModuleSyntax": true,
+
+    // 実行するのと同じ ./foo.ts という綴りで import する。noEmit とあわせてのみ使える
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    // 検査を厳しくする。
+    // noUncheckedIndexedAccess は、arr[0] や obj[key] が undefined になりうることを型に出す。
+    // src/tools/files.ts のパスの分解のように、添字で取り出す箇所が多いため入れている
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+
+    // 使っていない変数と引数を落とす。引数は _ 始まりだけ見逃す
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // package.json を import 無しで読むため（src/server.ts が版を取る）
+    "resolveJsonModule": true,
+
+    // 依存の .d.ts までは検査しない。手元のコードの誤りに集中する
+    "skipLibCheck": true,
+
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["index.ts", "stdio.ts", "src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules"]
+}

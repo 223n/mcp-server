@@ -2,6 +2,9 @@
 * text=auto eol=lf
 
 *.md text
+*.ts text
+*.mts text
+*.cts text
 *.js text
 *.mjs text
 *.cjs text

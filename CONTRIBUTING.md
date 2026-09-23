@@ -6,7 +6,7 @@
 
 1. 変更の前にIssueを立て、何を変えたいかを書きます。小さな修正はIssue無しでも構いません
 1. `develop`から作業用のブランチを切ります（`feature/変更の名前`）
-1. 変更を加え、`npm run lint`が通ることを確かめます
+1. 変更を加え、`npm run lint`（型の検査と文書の検査）と`npm test`が通ることを確かめます
 1. `develop`へのPull Requestを開きます。テンプレートに沿って、何をなぜ変えたかを書きます
 
 ## ブランチの運用
@@ -54,7 +54,7 @@ Pull Requestはマージコミット（Create a merge commit）でマージし�
 - `scripts/setup.ps1`はPowerShell 7以上を前提にします。Windows PowerShell 5.1では動きません
 - `.ps1`はBOM無しのUTF-8、改行はLFで保存します。PowerShell 7はBOMが無くてもUTF-8として読みます
 - ネイティブコマンドの成否は`$LASTEXITCODE`で判定します。`if (gh ...)`は出力を見るため、`--silent`を付けた呼び出しでは常に偽になります
-- `npm run lint`は日本語の文書だけを検査します。スクリプトは検査の対象外です
+- `npm run lint`は型（`tsc --noEmit`）と文書を検査します。`.sh`や`.ps1`のスクリプトは検査の対象外です
 
 ## コミットメッセージ
 
