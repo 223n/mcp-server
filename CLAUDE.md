@@ -106,7 +106,7 @@ gh api --method POST "repos/OWNER/REPO/git/refs" -f "ref=refs/heads/develop" -f 
 - stdioで動くとき、標準出力はMCPの通信路です。ログは`console.error`で標準エラーに出します。`console.log`を足すと通信が壊れます
 - `.env`はコミットしません。`.gitignore`で外しています
 - `src/tools/files.ts`と`src/tools/sensitive.ts`の防御を弱めないでください。変えたときは、許可ルートの外、`..`、8.3形式の短い名前、秘密のファイルが拒まれることを確かめます
-  - 秘密のファイルの判定は`src/tools/sensitive.ts`の1か所に置きます。`git_read`の`diff`と`github_read`の`pr_diff`も同じ判定を使います。入口ごとに一覧を持たないでください
+  - 秘密のファイルの判定は`src/tools/sensitive.ts`の1か所に置きます。`git_read`の`diff`、`github_read`の`pr_diff`、`ollama_review_code`の`git_diff`と`pull_request`も同じ判定を使います。入口ごとに一覧を持たないでください
 - gitの子プロセスの設定（`src/git/exec.ts`の`HARDENED_CONFIG`）と、`.git/config`の鍵の許可リスト（`src/tools/git.ts`の`LOCAL_CONFIG_KEYS`）を緩めないでください。取得したリポジトリの`.git/config`は、`GIT_CONFIG_SYSTEM`を差し替えても読まれます
 - 本番のイメージは`npm ci --omit=dev`で作ります。サーバーが実行時に使うパッケージは`dependencies`に、型と文書の検査の道具（`typescript`、`@types/*`など）は`devDependencies`に入れます。イメージに`typescript`は入りませんが、型を取り除くのはNode自身なので問題ありません
 - サーバーを変えたら`npm test`を通します。Ollamaの代わりに`test/helpers/mock-ollama.ts`を使うため、GPUは要りません。振る舞いを足したら試験も足します

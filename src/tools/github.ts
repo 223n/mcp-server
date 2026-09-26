@@ -200,15 +200,8 @@ async function readGitHub(args: GitHubReadArgs, ctx?: ToolContext): Promise<stri
     }
 
     case "pr_diff": {
-      const diff = await api<string>(`/repos/${owner}/${repo}/pulls/${number(args.number)}`, {
-        accept: "application/vnd.github.diff",
-
-        signal,
-      });
-
-      // git_read の diff と files.ts と同じ判定で、秘密のファイルの区画を落とす。
       // 落としたことは、切り詰めで消えないよう trim の後ろに書く
-      const { text, excluded } = excludeSensitiveSections(diff);
+      const { text, excluded } = await fetchPullDiff(owner, repo, args.number, signal);
 
       return [trim(text), exclusionNote(excluded)].filter(Boolean).join("\n");
     }
@@ -276,6 +269,44 @@ async function readGitHub(args: GitHubReadArgs, ctx?: ToolContext): Promise<stri
     default:
       throw new Error(`Unknown op: ${args.op}`);
   }
+}
+
+// Pull Request の差分を取り、git_read の diff と files.ts と同じ判定で、秘密のファイルの区画を落とす
+async function fetchPullDiff(
+  owner: string,
+  repo: string,
+  pr: unknown,
+  signal?: AbortSignal,
+): Promise<{ text: string; excluded: string[] }> {
+  const diff = await api<string>(`/repos/${owner}/${repo}/pulls/${number(pr)}`, {
+    accept: "application/vnd.github.diff",
+
+    signal,
+  });
+
+  return excludeSensitiveSections(diff);
+}
+
+/** ollama_review_code の pull_request。src/tools/index.ts の inputSchema と対で保つこと */
+export type PullRequestSource = {
+  repo: string;
+  number: number;
+};
+
+/**
+ * Pull Request の差分を、Claude に返さずにローカルのモデルへ渡すために読む。
+ * 防御は github_read の pr_diff と同じ経路（owner の許可リスト、秘密のファイルの除外）を通す。
+ * 大きさは、渡す側（buildFileContext）の入力の予算で区画ごとに落とす
+ */
+export async function readPullDiff(
+  source: PullRequestSource,
+  signal?: AbortSignal,
+): Promise<{ text: string; notes: string[] }> {
+  const { owner, repo } = splitRepo(source.repo);
+
+  const { text, excluded } = await fetchPullDiff(owner, repo, source.number, signal);
+
+  return { text, notes: [exclusionNote(excluded)].filter(Boolean) };
 }
 
 function number(value: unknown): number {

@@ -98,6 +98,9 @@ WindowsではPowerShell 7以上で`scripts/setup.ps1`を使います。
 実行のあと、手元は`feature/setup-repository`ブランチに残ります。
 開かれたPull Requestをマージしたら、`develop`に戻してから作業を始めます。
 
+書き換えるものが無ければ、ブランチとPull Requestは作りません。
+Pull Requestをマージする前に実行し直すと、名前の書き換えは飛ばし、ファイルを変えずに案内を出します。
+
 ### 必要な設定
 
 GitHubの画面で行う設定です。
@@ -274,7 +277,10 @@ develop ──▶ release/vX.Y.Z ──(Pull Request)──▶ main ──▶ �
 
 版は`package.json`の`version`で管理します。
 `develop`と`main`の版、最新のタグのどれよりも大きい版だけを受け付けます。
-すでにあるタグや、開いたままの`release/*`ブランチがあると止まります。
+すでにあるタグや、残っている`release/*`ブランチがあると止まります。
+止まったときは、ブランチごとに、開いているPull Requestか、ブランチを消すコマンドを表示します。
+Pull Requestを閉じてもブランチは消えないため、閉じたときはブランチも消してから実行し直します。
+Pull Requestを開く段で失敗したときは、ワークフローが押したブランチを消します。
 `-rc.1`のようなプレリリースの版は、GitHub Releaseでもプレリリースになります。
 
 `auto_merge`を有効にして実行すると、Pull Requestを人手で確かめずにマージし、公開まで一気に進めます。
