@@ -26,10 +26,11 @@ type Crawl = { dir: string; relative: string; depth: number };
 
 const MAX_FILE_BYTES = 512 * 1024;
 
-// qwen2.5-coder のコンテキスト長 32k トークンのうち、渡すファイルに使ってよい量の目安。
+// 渡すファイルに使ってよい量の既定の目安（コンテキストを 32k トークンと見込んだ場合）。
 // 残りは system プロンプト、利用者の指示、出力（既定 4096）に充てる。
+// OLLAMA_NUM_CTX を設定したときは、runChat がその値から予算を決めて渡す。
 // 文字数で測ると、日本語のコメントが多いコードで大きく外れるため、トークン数の目安で測る
-const MAX_PROMPT_TOKENS = 24000;
+export const DEFAULT_PROMPT_BUDGET = 24000;
 
 // グロブ 1 件が展開してよいファイル数の上限
 const MAX_EXPANDED_FILES = 40;
@@ -680,11 +681,16 @@ export async function buildFileContext({
   files = [],
   inlineFiles = [],
   lineNumbers = false,
+  budget = DEFAULT_PROMPT_BUDGET,
   signal,
 }: {
   files?: string[];
   inlineFiles?: InlineFile[];
   lineNumbers?: boolean;
+
+  /** 渡すファイルに使ってよいトークン数の目安 */
+  budget?: number;
+
   signal?: AbortSignal;
 } = {}): Promise<FileContext & { usedTokens: number }> {
   if (files.length > 0 && readRoots().length === 0) {
@@ -727,7 +733,7 @@ export async function buildFileContext({
     signal?.throwIfAborted();
 
     // 予算を使い切ったあとは読まない。読んでから捨てると、40 件 x 512 KB を無駄に読むことになる
-    if (used >= MAX_PROMPT_TOKENS && first) {
+    if (used >= budget && first) {
       omitted.push(target.display);
 
       continue;
@@ -741,7 +747,7 @@ export async function buildFileContext({
 
     const tokens = estimateTokens(text);
 
-    if (used + tokens > MAX_PROMPT_TOKENS) {
+    if (used + tokens > budget) {
       omitted.push(part.display);
 
       continue;
@@ -761,7 +767,7 @@ export async function buildFileContext({
 
     const tokens = estimateTokens(text);
 
-    if (used + tokens > MAX_PROMPT_TOKENS) {
+    if (used + tokens > budget) {
       omitted.push(part.display);
 
       continue;
@@ -775,18 +781,18 @@ export async function buildFileContext({
   const notes: string[] = [];
 
   if (blocks.length === 0 && first) {
-    blocks.push(renderTruncated(first, MAX_PROMPT_TOKENS));
+    blocks.push(renderTruncated(first, budget));
 
     omitted.shift();
 
     notes.push(
-      `WARNING: ${first.display} did not fit the input budget (${MAX_PROMPT_TOKENS} tokens) and was cut off. Pass a line range such as \`path#L1-500\`.`,
+      `WARNING: ${first.display} did not fit the input budget (${budget} tokens) and was cut off. Pass a line range such as \`path#L1-500\`.`,
     );
   }
 
   if (omitted.length > 0) {
     notes.push(
-      `WARNING: ${omitted.length} of ${unique.length + inlineFiles.length} files were omitted because the input budget (${MAX_PROMPT_TOKENS} tokens) was reached: ${omitted.join(", ")}. Split them across several calls.`,
+      `WARNING: ${omitted.length} of ${unique.length + inlineFiles.length} files were omitted because the input budget (${budget} tokens) was reached: ${omitted.join(", ")}. Split them across several calls.`,
     );
   }
 

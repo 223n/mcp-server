@@ -79,6 +79,8 @@ export const config = {
 
   ollamaMaxQueue: env.OLLAMA_MAX_QUEUE,
 
+  ollamaNumCtx: env.OLLAMA_NUM_CTX,
+
   // Node の requestTimeout は「要求を受け取り終えるまで」の上限で、応答を返している時間には効かない。
   // 以前は OLLAMA_MAX_DURATION + 60 秒（既定で 3060 秒）にしていたが、長い生成を守る効果は無く、
   // 本文をゆっくり送る相手に接続を約 51 分つかませる余地だけを作っていた

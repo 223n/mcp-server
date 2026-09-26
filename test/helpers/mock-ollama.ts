@@ -18,6 +18,7 @@ export type MockState = { chats: MockChat[]; aborted: number };
 //   MOCK_SLOW   200 ミリ秒ごとに 50 回に分けて返す（中断とタイムアウトの試験用）
 //   MOCK_ERROR  HTTP 500 とエラーの JSON を返す
 // モデルの名前が "missing:model" なら、入っていないモデルとして HTTP 404 を返す
+//   MOCK_FULL_CONTEXT  prompt_eval_count を num_ctx（無ければ 32768）ちょうどにする（上限に張り付いた警告の試験用）
 // 応答の最初の断片には、受け取ったファイルの数（"### File:" の数）を入れる
 export async function startMockOllama() {
   const state: MockState = { chats: [], aborted: 0 };
@@ -25,6 +26,22 @@ export async function startMockOllama() {
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/api/version") {
       return sendJson(res, 200, { version: "0.0.0-mock" });
+    }
+
+    if (req.method === "GET" && req.url === "/api/ps") {
+      return sendJson(res, 200, {
+        models: [
+          {
+            name: "mock:latest",
+
+            size_vram: 1024 ** 3,
+
+            context_length: 8192,
+
+            expires_at: "2026-09-26T13:00:00Z",
+          },
+        ],
+      });
     }
 
     if (req.method === "GET" && req.url === "/api/tags") {
@@ -90,8 +107,13 @@ export async function startMockOllama() {
         }
       }
 
+      // 上限に張り付いたときの警告を試すため、求められれば num_ctx ちょうどを返す
+      const numCtx = typeof body.options?.num_ctx === "number" ? body.options.num_ctx : 32768;
+
+      const promptEvalCount = prompt.includes("MOCK_FULL_CONTEXT") ? numCtx : 10;
+
       res.end(
-        `${JSON.stringify({ model: body.model, done: true, done_reason: "stop", prompt_eval_count: 10, eval_count: count })}\n`,
+        `${JSON.stringify({ model: body.model, done: true, done_reason: "stop", prompt_eval_count: promptEvalCount, eval_count: count })}\n`,
       );
 
       return;

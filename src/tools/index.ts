@@ -381,6 +381,7 @@ export function buildTools({
         "Delegate a self-contained text task to a local LLM running on the user's own GPU via Ollama (no API cost, private). " +
         "Good for first drafts, summaries, translations, boilerplate, test scaffolding, brainstorming and bulk text processing. " +
         "The local model is much weaker than Claude: give it complete context in one prompt and verify its output before relying on it. " +
+        (config.ollamaNumCtx ? `Its context window is ${config.ollamaNumCtx} tokens (OLLAMA_NUM_CTX). ` : "") +
         "Typical latency 5-90 s." +
         filesHint +
         saveHint,

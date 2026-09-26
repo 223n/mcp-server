@@ -59,6 +59,11 @@ export const env = {
 
   OLLAMA_MAX_QUEUE: toInt("OLLAMA_MAX_QUEUE", 8, 0, 1000),
 
+  // Ollama に送るコンテキスト長（num_ctx）。0 なら送らず、Ollama の設定
+  // （OLLAMA_CONTEXT_LENGTH、Modelfile の PARAMETER num_ctx）に任せる。
+  // 上げると KV キャッシュで VRAM を多く使うため、載り切る値にする。要求ごとに変えるとモデルを読み込み直すため、1 つの値にする
+  OLLAMA_NUM_CTX: toInt("OLLAMA_NUM_CTX", 0, 0, 1048576),
+
   // HTTP の要求を受け取り終えるまでの上限（Node の requestTimeout）。
   // 応答を返している時間（生成の時間）には効かないため、OLLAMA_MAX_DURATION とは結び付けない。
   // 長くすると、本文をゆっくり送り続ける相手に、接続をその間つかまれる

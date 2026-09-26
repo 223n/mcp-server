@@ -98,6 +98,21 @@ test("合計の上限を超えたら、入りきらないファイルを落と�
   assert.match(context.notes.join("\n"), /part2\.txt/);
 });
 
+test("予算を渡すと、その量で入りきらないファイルを落とす", async () => {
+  writeFileSync(at("small1.txt"), "c".repeat(3500));
+
+  writeFileSync(at("small2.txt"), "d".repeat(3500));
+
+  // 既定の予算なら両方入るが、1500 トークンでは 2 件目が入らない
+  const wide = await buildFileContext({ files: [at("small1.txt"), at("small2.txt")] });
+
+  assert.equal(wide.notes.length, 0);
+
+  const narrow = await buildFileContext({ files: [at("small1.txt"), at("small2.txt")], budget: 1500 });
+
+  assert.match(narrow.notes.join("\n"), /1 of 2 files were omitted because the input budget \(1500 tokens\)/);
+});
+
 test("1 件も入らないときは、先頭のファイルを途中まで入れて切ったと書く", async () => {
   writeFileSync(at("huge.txt"), "z".repeat(200000));
 
