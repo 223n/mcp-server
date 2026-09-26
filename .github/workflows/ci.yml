@@ -204,7 +204,11 @@ jobs:
 
       - name: 起動して応答を確かめる
         run: |
-          docker run --detach --name "${CONTAINER}" "${IMAGE}"
+          # docker-compose.yml と同じ絞り込み（読み取り専用のルート、/tmp だけ書ける、権限なし）で起動する
+          docker run --detach --name "${CONTAINER}" \
+            --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 \
+            "${IMAGE}"
 
           for _ in $(seq 1 30); do
             if docker exec "${CONTAINER}" wget -qO- http://127.0.0.1:3000/healthz; then
@@ -213,6 +217,12 @@ jobs:
             sleep 1
           done
           docker exec "${CONTAINER}" wget -qO- http://127.0.0.1:3000/healthz
+
+          # 絞り込みが効いていること。ルートに書けてしまうなら、フラグの付け忘れを疑う
+          if docker exec "${CONTAINER}" touch /app/.write-probe 2>/dev/null; then
+            echo "::error::the root filesystem is writable; --read-only did not take effect"
+            exit 1
+          fi
 
           initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
 

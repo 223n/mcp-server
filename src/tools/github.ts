@@ -4,6 +4,8 @@ import { config } from "../config/config.ts";
 
 import { excludeSensitiveSections, exclusionNote } from "./sensitive.ts";
 
+import { thirdParty } from "./third-party.ts";
+
 /**
  * GitHub の API から返る値のうち、このサーバーが読む部分だけ。
  *
@@ -155,7 +157,12 @@ async function api<T>(
 const line = (parts: (string | number | undefined)[]): string =>
   parts.filter(Boolean).join("  ");
 
+// 読み取りの結果は、どの操作も他人が書いた文章（題名、本文、コメント、差分、チェックの名前）を含む
 export async function githubRead(args: GitHubReadArgs, ctx?: ToolContext): Promise<string> {
+  return thirdParty(await readGitHub(args, ctx));
+}
+
+async function readGitHub(args: GitHubReadArgs, ctx?: ToolContext): Promise<string> {
   const { owner, repo } = splitRepo(args.repo);
 
   const signal = ctx?.mcpReq?.signal;

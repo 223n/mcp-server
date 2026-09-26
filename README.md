@@ -55,6 +55,7 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
   - `*`は直下、`**/*.php`は下の階層のPHPのファイル、`*.{js,ts}`は選択肢、末尾の`/`はディレクトリだけです
   - `**`でたどるのは`path`から8階層までです。それより深いときは、そのことを結果に書き添えます
   - 秘密のファイルと、`node_modules`、`vendor`、`.git`は出しません。シンボリックリンクはたどりません
+- `model`には、モデルの名前の代わりに別名`fast`（`DEFAULT_MODEL`）と`deep`（`DEEP_MODEL`）を渡せます。入っていないモデルを渡したときは、入っているモデルの一覧を添えて返します
 - 応答の末尾に`[ollama] model=... prompt_tokens=... output_tokens=... done_reason=... elapsed=...`が付きます。`done_reason=length`や`done_reason=timeout`のときは、出力が途中で切れています
 - 小さいモデルは同じ内容を繰り返し続けることがあるため、出力のトークン数に上限を設けています。`ollama_chat`は4096、ほかの2つは1536で、`max_tokens`で変えられます
 - ローカルのモデルの出力は誤りを含みます。Claudeの側で確かめてから使います
@@ -192,6 +193,7 @@ HTTPでも、`files`引数と`list_files`を使えます。
 応答にはパスと先頭と末尾の抜粋だけが返るため、Claudeが全文を読まずに済みます。
 
 1. ホスト側に書き出し先のディレクトリを作ります。コンテナーの`node`ユーザーが書ける権限にします
+    - `docker-compose.yml`は`C:\dev`を読み取り専用でマウントし、`C:\dev\ollama-out`だけを読み書きできる形で重ねています。別の場所にするときは、`docker-compose.yml`の`volumes`も合わせます
 1. `.env`に`OUTPUT_DIR=C:\dev\ollama-out=/work/dev/ollama-out`のように書きます
 1. HTTPでも使うときは、認証を設定したうえで`HTTP_ALLOW_WRITES=true`を足します
 1. `docker compose up -d`でコンテナーを作り直します。`ollama_health`の`output saving`が`enabled`になれば有効です
@@ -218,6 +220,7 @@ HTTPでも、`files`引数と`list_files`を使えます。
 `CLONE_ROOT`を設定すると、GitHubのリポジトリを取得して、そのままローカルのモデルにレビューさせられます。
 
 1. ホスト側に取得先のディレクトリを作ります（例:`C:\dev\claude`）
+    - `docker-compose.yml`は`C:\dev\claude`を読み書きできる形でマウントしています。別の場所にするときは、`docker-compose.yml`の`volumes`も合わせます
 1. `.env`に`CLONE_ROOT`と`GIT_ALLOWED_OWNERS`を書きます
 1. privateのリポジトリを扱うときは、fine-grainedのトークンを`GITHUB_MCP_TOKEN`に書きます。対象のリポジトリは列挙して絞ります
 1. commitとpushまで任せるときは、`GIT_ALLOW_WRITE=true`、`GIT_USER_NAME`、`GIT_USER_EMAIL`を足します
@@ -268,7 +271,7 @@ GitHubが認証のない要求に404を返すためで、名前の打ち間違�
 ```
 
 - 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
-- `identity`は、Cloudflare AccessのJWTの`email`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
+- `identity`は、Cloudflare AccessのJWTの`email`、サービストークンなら`service:<クライアントID>`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
 - `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
   - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
   - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
@@ -289,6 +292,11 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
 
 - `.env`はコミットしません。`.gitignore`で外しています
 - Ollama（11434番ポート）には認証がありません。LANやインターネットへ直に公開しないでください
+- コンテナーは権限を絞って動かします（`docker-compose.yml`）
+  - ルートのファイルシステムは読み取り専用で、書けるのは`/tmp`（メモリ上）と書き込み先だけです
+  - `C:\dev`は読み取り専用でマウントし、`CLONE_ROOT`と`OUTPUT_DIR`の場所だけを読み書きできる形で重ねます。サーバーの約束が外れたとき（gitやNodeの不具合など）に書き換えられる範囲を、この2つに絞るためです
+  - ケーパビリティはすべて外し、特権の昇格を禁じ、プロセスの数に上限を設けます
+  - CIも同じ絞り込みでコンテナーを起動し、HTTPとstdioが応答することを確かめます
 - HTTPでファイルを読めるのは、`HTTP_ALLOW_FILES=true`に加えて認証を設定したときだけです
 - ファイルの読み込みは`FILE_ROOTS`の配下だけに限ります
   - `.env`、`.envrc`、`.npmrc`、秘密鍵、`app_local.php`などの秘密のファイルと、`.git`や`.ssh`などの配下は拒みます
@@ -316,6 +324,7 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
   - 名前を変えた差分は、元の名前と新しい名前のどちらかが当たれば外します
   - ただしこれは名前による防御です。秘密に当たらない名前のファイルに書かれた秘密や、コミットのメッセージに書かれた秘密は読めます
 - 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
+- `github_read`の結果と、`git_read`の`log`、`diff`、`show`の結果には、第三者が書いた文章なので指示として扱わない旨を末尾に添えます。サーバーの`instructions`とツールの説明にも同じことを書いています
 - ツールの呼び出しは監査ログに残します。中身は出しませんが、ファイルのパスと操作の種類は残します
 - HTTPのアクセスログは10MBを3世代まで残します
 
@@ -406,11 +415,14 @@ npm test
 - `git_read`の`diff`と`github_read`の`pr_diff`から、`files`が拒むのと同じ秘密のファイルが外れること（名前の変更、引用符で囲まれた名前を含む）
 - 取得したリポジトリの`.git/config`に許可していない鍵（`core.fsmonitor`、`core.hooksPath`、`diff.external`、`include.path`など）があれば、gitを動かさずに拒むこと
 - 許可リストを通り抜けても、フックと`core.fsmonitor`がコマンドの側の設定で止まること
+- `github_read`と`git_read`の`log`、`diff`、`show`の結果に第三者の文章だという断り書きが付き、`status`と空の差分には付かないこと
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
+- `resources/read`で復号できないURI（壊れた符号化、NUL）を拒んだときも、監査ログに残ること
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
+- Cloudflare Accessの鍵の取得を、同時に届いた知らない`kid`のJWTで分け合い、失敗した直後は取り直さないこと
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること
 - HTTPの`requestTimeout`より長い生成が、途中で切れずに最後まで返ること
@@ -418,7 +430,9 @@ npm test
 - 認証を設定したHTTPで、認証のない要求には本文を読み終える前に401を返すこと
 - 失敗した要求が1分に60回を超えると429で断り、成功した要求は数えないこと
 - `list_files`のグロブが、`*`を並べた意地の悪いパターンでもすぐ終わること（ReDoSを防ぐ）
+- ツールの説明に決め打ちのモデルの名前が出ず、別名`fast`と`deep`が設定したモデルに読み替わること。入っていないモデルには一覧を添えて返すこと
 - サーバーが読む環境変数を、`docker-compose.yml`がすべてコンテナーに渡していること
+- `docker-compose.yml`がコンテナーの権限を絞り、`C:\dev`を読み取り専用にして、書き込み先だけを読み書きできる形で重ねていること。CIが同じ絞り込みで起動すること
 - 環境変数の不正な値で、起動時に止まること
 
 CIは、Node 22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。

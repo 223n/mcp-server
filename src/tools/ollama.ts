@@ -104,6 +104,39 @@ export function limiterStats() {
   return limiter.stats();
 }
 
+/** "fast" と "deep" を、設定したモデルの名前に読み替える。PC ごとのモデルの名前を Claude に覚えさせない */
+export function resolveModel(model: string | undefined): string | undefined {
+  if (model === "fast") {
+    return config.defaultModel;
+  }
+
+  if (model === "deep") {
+    return config.deepModel;
+  }
+
+  return model;
+}
+
+// 入っていないモデルを指定されると、Ollama は 404 と「model "x" not found」を返す。
+// どのモデルなら使えるかを添えて、次の呼び出しで直せるようにする。一覧を取れなければ元のエラーのまま返す
+async function explainMissingModel(error: unknown, signal?: AbortSignal): Promise<unknown> {
+  if (!(error instanceof Error) || !/HTTP 404/.test(error.message) || !/not found/i.test(error.message)) {
+    return error;
+  }
+
+  try {
+    const tags = await ollamaRequest<OllamaTags>("/api/tags", undefined, { signal });
+
+    const names = (tags.models ?? []).map((m) => m.name).filter(Boolean);
+
+    return new Error(
+      `${error.message}. Installed models: ${names.join(", ") || "(none)"}. Aliases: "fast" = ${config.defaultModel}, "deep" = ${config.deepModel}.`,
+    );
+  } catch {
+    return error;
+  }
+}
+
 function formatResult(result: ChatResult, notes: string[] = []): string {
   // 落としたファイルの警告は先頭に置く。save_output のときは抜粋しか読まないため、末尾だと見落とす
   return [...notes, result.content.trim(), "---", metaLine(result), ...warningsFor(result)].join("\n");
@@ -182,10 +215,12 @@ export async function runChat(
 
   const report = progressReporter(ctx);
 
+  const modelName = resolveModel(model) ?? config.defaultModel;
+
   const result = await limiter.run(
     () =>
       ollamaChat({
-        model: model ?? config.defaultModel,
+        model: modelName,
 
         messages: [
           ...(system ? [{ role: "system", content: system } satisfies ChatMessage] : []),
@@ -211,7 +246,9 @@ export async function runChat(
       onWait: ({ active, queued }) =>
         report?.({ chunks: 0, elapsedMs: 0, queued, active }),
     },
-  );
+  ).catch(async (error: unknown) => {
+    throw await explainMissingModel(error, signal);
+  });
 
   if (save) {
     return await saveAndSummarise(result, context.notes, { outputName });

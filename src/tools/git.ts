@@ -18,6 +18,8 @@ import {
 
 import { excludeSensitiveSections, exclusionNote, isSensitivePath } from "./sensitive.ts";
 
+import { thirdParty } from "./third-party.ts";
+
 /** "owner/repo" を分解し、取得先のディレクトリまで決めたもの */
 type RepoTarget = { owner: string; repo: string; slug: string; dir: string };
 
@@ -123,7 +125,11 @@ export async function initClone({ warn = console.error }: Reporter = {}): Promis
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
-    warn(`[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}`);
+    // docker-compose.yml は C:/dev を読み取り専用でマウントし、書き込み先だけを読み書きできる形で重ねている
+    warn(
+      `[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}. ` +
+        "In Docker, mount it read-write under volumes in docker-compose.yml.",
+    );
 
     return false;
   }
@@ -457,21 +463,22 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
     case "status":
       return await run(["status", "--short", "--branch"]);
 
+    // log、diff、show はコミットのメッセージや他人の書いたコードを返すため、断り書きを添える
     case "log":
-      return await run([
+      return thirdParty(await run([
         "log",
         `--max-count=${Math.min(args.limit ?? 20, 200)}`,
         "--date=iso",
         "--pretty=format:%h %ad %an %s",
         ...(args.ref ? [checkValue(args.ref, "ref")] : []),
-      ]);
+      ]));
 
     case "diff":
-      return await readDiff(run, args);
+      return thirdParty(await readDiff(run, args));
 
     case "show":
       // 中身は返さない。git show <ref>:<path> は files.ts の拒否リストを通らないため
-      return await run([
+      return thirdParty(await run([
         "show",
         "--no-ext-diff",
         "--no-textconv",
@@ -479,7 +486,7 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
         "--pretty=format:%h %ad %an%n%n%s%n%n%b",
         "--date=iso",
         checkValue(args.ref ?? "HEAD", "ref"),
-      ]);
+      ]));
 
     case "branches":
       return await run(["branch", "--all", "--format=%(refname:short) %(objectname:short)"]);

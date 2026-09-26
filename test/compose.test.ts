@@ -58,3 +58,69 @@ test(".gitignore で外している秘密のファイルは、Docker のビル�
   // 試験はイメージの中では動かさないため、写さない
   assert.ok(dockerignore.has("test"));
 });
+
+const composeText = () => readFileSync(path.join(ROOT, "docker-compose.yml"), "utf8");
+
+// "C:\dev\claude=/work/dev/claude" を、ホストの側とコンテナーの側に分ける。区切りの向きはそろえる
+function splitRoot(value: string): { host: string; container: string } {
+  const [host = "", container = ""] = value.split("=");
+
+  return { host: host.replace(/\\/g, "/").toLowerCase(), container };
+}
+
+test("コンテナーは権限を絞って動かす", () => {
+  const compose = composeText();
+
+  assert.match(compose, /^\s+read_only: true$/m);
+
+  assert.match(compose, /^\s+tmpfs:\n\s+- \/tmp$/m);
+
+  assert.match(compose, /^\s+cap_drop:\n\s+- ALL$/m);
+
+  assert.match(compose, /^\s+- no-new-privileges:true$/m);
+
+  assert.match(compose, /^\s+pids_limit: \d+$/m);
+});
+
+test("C:/dev は読み取り専用にし、書き込み先だけを読み書きできる形で重ねる", () => {
+  const compose = composeText();
+
+  const volumes = compose.slice(compose.indexOf("volumes:"), compose.indexOf("healthcheck:"));
+
+  const mounts = [...volumes.matchAll(/^\s+- ([^\s#]+)$/gm)].map((m) => m[1] ?? "");
+
+  assert.ok(mounts.includes("C:/dev:/work/dev:ro"), `C:/dev must be read-only: ${mounts.join(", ")}`);
+
+  // 既定の CLONE_ROOT と、.env.example の OUTPUT_DIR の例が指す場所を、読み書きできる形でマウントしていること
+  const cloneDefault = /CLONE_ROOT: \$\{CLONE_ROOT:-([^}]+)\}/.exec(compose)?.[1] ?? "";
+
+  const envExample = readFileSync(path.join(ROOT, ".env.example"), "utf8");
+
+  const outputExample = /^# OUTPUT_DIR=(.+)$/m.exec(envExample)?.[1] ?? "";
+
+  for (const value of [cloneDefault, outputExample]) {
+    const { host, container } = splitRoot(value);
+
+    assert.ok(container, `could not read the container path from "${value}"`);
+
+    const mount = mounts.find((m) => m.endsWith(`:${container}`) || m.endsWith(`:${container}:ro`));
+
+    assert.ok(mount, `${container} is not mounted`);
+
+    assert.ok(!mount.endsWith(":ro"), `${container} must be writable: ${mount}`);
+
+    assert.equal(mount.slice(0, -`:${container}`.length).toLowerCase(), host, mount);
+  }
+});
+
+test("CI はコンテナーを docker-compose.yml と同じ絞り込みで起動する", () => {
+  const ci = readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+
+  const run = /docker run --detach[\s\S]*?"\$\{IMAGE\}"/.exec(ci)?.[0] ?? "";
+
+  const pids = /^\s+pids_limit: (\d+)$/m.exec(composeText())?.[1];
+
+  for (const flag of ["--read-only", "--tmpfs /tmp", "--cap-drop ALL", "--security-opt no-new-privileges", `--pids-limit ${pids}`]) {
+    assert.ok(run.includes(flag), `ci.yml docker run is missing ${flag}`);
+  }
+});

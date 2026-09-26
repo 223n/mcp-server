@@ -6,6 +6,9 @@ import { audit } from "../audit.ts";
 
 import { readForResource, readRoots } from "./files.ts";
 
+// 監査に残すパスの長さの上限。復号できなかった値は、受け取ったまま（符号化されたまま）これだけ残す
+const MAX_AUDIT_PATH = 200;
+
 // ホスト側の表記（C:\dev\app\x.php）を file:/// の URI にする。
 // SDK の UriTemplate は match のときに復号しないため、こちらも段ごとに符号化し、
 // 読み込み側で 1 度だけ復号する。二重に符号化・復号しないこと
@@ -72,11 +75,15 @@ export function registerFileResources(server: McpServer): void {
     async (uri: URL, variables: Variables, ctx: ServerContext) => {
       // resources/read にはツール名が無く、ツールの監査に載らない。
       // 読み取りの経路としてはツールと同じ重さなので、ここで別に記録する
-      const input = fromUriPath(variables.path);
-
       const started = Date.now();
 
+      // 復号の失敗（壊れた符号化、NUL）も記録する。拒んだ要求こそ、あとから追いたい。
+      // 復号できなかったときは、受け取った値を符号化されたまま残す
+      let input = String(variables.path).slice(0, MAX_AUDIT_PATH);
+
       try {
+        input = fromUriPath(variables.path);
+
         const text = await readForResource(input, { signal: ctx?.mcpReq?.signal });
 
         audit({ kind: "resource", ok: true, ms: Date.now() - started, path: input });

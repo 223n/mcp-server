@@ -8,6 +8,19 @@ services:
 
     restart: unless-stopped
 
+    # 権限を絞る。サーバーは第三者のリポジトリを git で扱うため、コードの約束が外れたときに
+    # できることを小さくしておく。ルートのファイルシステムは読み取り専用にし、
+    # 書けるのは /tmp（メモリ上）と、下の volumes で読み書きできる形にした書き込み先だけにする。
+    # .github/workflows/ci.yml の「起動して応答を確かめる」も、同じ絞り込みで起動する
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+
     # 公開はこの PC 内（127.0.0.1）に限定。外部からは Cloudflare Tunnel 経由のみ
     ports:
       - "127.0.0.1:3000:3000"
@@ -41,7 +54,7 @@ services:
       # stdio と、HTTP_ALLOW_FILES=true かつ認証を設定した HTTP で使われる
       FILE_ROOTS: 'C:\dev=/work/dev;C:\docker=/work/docker'
       # ローカルのモデルの出力を書き出す先。空なら保存の機能ごと無効。
-      # 例: 'C:\dev\ollama-out=/work/dev/ollama-out'（先にホスト側で作っておくこと）
+      # 例: 'C:\dev\ollama-out=/work/dev/ollama-out'（下の volumes で、この場所を読み書きできる形でマウントしている）
       OUTPUT_DIR: ${OUTPUT_DIR:-}
       # HTTP でも保存を許すかどうか。HTTP_ALLOW_FILES とは別に持ち、既定は false
       HTTP_ALLOW_WRITES: ${HTTP_ALLOW_WRITES:-false}
@@ -63,9 +76,14 @@ services:
       GITHUB_ALLOW_WRITE: ${GITHUB_ALLOW_WRITE:-false}
 
     volumes:
-      # C:/dev は読み書き可能。OUTPUT_DIR への書き出しと、今後のリポジトリの取得に使う。
-      # サーバーが実際に書くのは OUTPUT_DIR の配下だけで、読み込みのツールは今までどおり書き換えない
-      - C:/dev:/work/dev
+      # C:/dev は読み取り専用にする。サーバーが書くのは CLONE_ROOT と OUTPUT_DIR の配下だけだが、
+      # それはコードの約束にすぎない。約束が外れたときに書き換えられる範囲を、この 2 つに絞る
+      - C:/dev:/work/dev:ro
+      # 書き込み先だけを、読み書きできる形で重ねる。コンテナーの側のパスは、CLONE_ROOT と OUTPUT_DIR の
+      # 「=」の右と同じにする。どちらかのホストの側を変えたときは、ここも合わせる。
+      # ホストにディレクトリが無ければ Docker が作る（OUTPUT_DIR を設定しないときも作られる）
+      - C:/dev/claude:/work/dev/claude
+      - C:/dev/ollama-out:/work/dev/ollama-out
       - C:/docker:/work/docker:ro
 
     healthcheck:
