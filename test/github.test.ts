@@ -187,6 +187,40 @@ test("PR を作ると URL を返す", async () => {
   });
 });
 
+test("pr_diff は秘密のファイルの区画を落とし、落としたことを書き添える", async () => {
+  const diff = [
+    "diff --git a/src/app.ts b/src/app.ts",
+    "--- a/src/app.ts",
+    "+++ b/src/app.ts",
+    "@@ -1 +1 @@",
+    "+export const visible = 1;",
+    "diff --git a/.envrc b/.envrc",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/.envrc",
+    "@@ -0,0 +1 @@",
+    "+export TOKEN=LEAKED_ENVRC",
+    'diff --git "a/\\343\\201\\202/service-account.json" "b/\\343\\201\\202/service-account.json"',
+    '--- "a/\\343\\201\\202/service-account.json"',
+    '+++ "b/\\343\\201\\202/service-account.json"',
+    "@@ -1 +1 @@",
+    '+{"private_key": "LEAKED_KEY"}',
+    "",
+  ].join("\n");
+
+  const calls = stubFetch(() => ({ body: diff }));
+
+  const text = await githubRead({ repo: "223n/mcp-server", op: "pr_diff", number: 3 });
+
+  assert.equal(calls[0]!.init.headers.Accept, "application/vnd.github.diff");
+
+  assert.match(text, /visible = 1/);
+
+  assert.doesNotMatch(text, /LEAKED_/);
+
+  assert.match(text, /excluded 2 file\(s\) that may contain secrets: \.envrc, あ\/service-account\.json/);
+});
+
 test("知らない op を拒む", async () => {
   // 型の上では通らない op を、わざと実行時に渡して拒まれることを確かめる
   await assert.rejects(

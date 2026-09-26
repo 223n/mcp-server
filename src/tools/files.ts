@@ -10,6 +10,8 @@ import { config } from "../config/config.ts";
 
 import { compileGlob } from "./glob.ts";
 
+import { isSensitiveName, SENSITIVE_DIRS, SENSITIVE_FILES } from "./sensitive.ts";
+
 /** 許可ルートの中だと確かめ終えたパス。root と realRoot はホスト側の表記に戻すために持つ */
 type ResolvedPath = { local: string; root: Root; realRoot: string };
 
@@ -36,46 +38,6 @@ const MAX_EXPANDED_FILES = 40;
 const EXPAND_MAX_DIRS = 5000;
 
 const EXPAND_TIME_BUDGET_MS = 10000;
-
-// 秘密情報を含みやすいファイル名（大文字小文字は区別しない）
-const SENSITIVE_FILES = [
-  /^\.env(?!\.(example|sample|template|dist)$)(\..+)?$/i,
-  /^\.env[-_]/i,
-  /\.env$/i,
-  /^\.envrc$/i,
-  /\.(pem|key|p12|pfx|keystore|jks|ppk|kdbx|tfstate|tfvars)$/i,
-  /^id_(rsa|dsa|ecdsa|ed25519)/i,
-  /^\.?credentials(\.(json|ya?ml|xml|ini|toml))?$/i,
-  /^\.(npmrc|yarnrc|yarnrc\.yml|pypirc|netrc|pgpass|htpasswd|git-credentials|dockercfg)$/i,
-  /^_netrc$/i,
-  /^secrets?\.(json|ya?ml|toml|ini|env|php|xml)$/i,
-  /^service[-_]?account.*\.json$/i,
-  /^token$/i,
-  /^app_local\.php$/i,
-  /^wp-config\.php$/i,
-  /^\.dev\.vars/i,
-  /\.tfstate(\.backup)?$/i,
-  /\.p8$/i,
-  /^\.vault-token$/i,
-  /^client_secret.*\.json$/i,
-  /^acme\.json$/i,
-  /^google-services\.json$/i,
-  /^GoogleService-Info\.plist$/i,
-  // ここから下は、グロブでまとめて拾うようになったことで必要になったもの。
-  // 「名前を知っている 1 件の誤読を止める」大きさでは、掃き出しに足りない
-  /^\.?env[.\-_](?!(example|sample|template|dist)$)/i,
-  /^(appsettings|local\.settings)(\..+)?\.json$/i,
-  /^web\.config$/i,
-  /^\.htaccess$/i,
-  /\.(crt|cer|der)$/i,
-  /^\.(bash|zsh|mysql|psql)_history$/i,
-  /^settings\.local\.json$/i,
-  /^docker-compose\.override\.ya?ml$/i,
-  /^\.mcp\.json$/i,
-];
-
-// 秘密情報を置く慣習のあるディレクトリ名
-const SENSITIVE_DIRS = /^(\.(ssh|aws|azure|gcloud|gnupg|docker|kube|git|cloudflared|wrangler|terraform)|secrets?)$/i;
 
 // 一覧で中に入らないディレクトリ（依存やビルドの出力で、数が多く役に立たない）
 const SKIPPED_DIRS = /^(node_modules|vendor|\.svn|\.hg|__pycache__|\.venv|\.cache)$/i;
@@ -167,14 +129,9 @@ async function verifyComponents(realRoot: string, realLocal: string, input: stri
       throw new Error(`Use the full (long) path name, short or aliased names are not supported: ${input}`);
     }
 
-    // どの段も、ファイルの拒否リストとディレクトリの拒否リストの両方で判定する。
-    // 「最後の段はファイルだから SENSITIVE_FILES だけ」にすると、ディレクトリを渡したときに
-    // .ssh や .kube や secrets が通り、逆に「ディレクトリとして解決したから SENSITIVE_DIRS だけ」に
-    // すると .env が通る。ここは入口ごとに変えず、常に両方で拒む
-    const secret =
-      SENSITIVE_DIRS.test(actual) || SENSITIVE_FILES.some((pattern) => pattern.test(actual));
-
-    if (secret) {
+    // どの段も、ファイルの拒否リストとディレクトリの拒否リストの両方で判定する（isSensitiveName）。
+    // ここは入口ごとに変えず、git の diff と GitHub の pr_diff も同じ判定を使う
+    if (isSensitiveName(actual)) {
       throw new Error(`Refusing to read a file that may contain secrets: ${input}`);
     }
 

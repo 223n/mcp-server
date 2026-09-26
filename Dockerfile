@@ -8,7 +8,8 @@ ENV NODE_ENV=production
 # 別の実行経路が増えない）。
 #
 # 設定は /etc/gitconfig ではなく専用の 1 枚に置き、GIT_CONFIG_SYSTEM でそれだけを読ませる。
-# こうすると、取得したリポジトリの .git/config に書かれた危険なキーが効かない。
+# 取得したリポジトリの .git/config（local）はこれでも読まれるため、src/git/exec.ts がコマンドの側の設定で
+# 危険な鍵を打ち消し、src/tools/git.ts が操作の前に鍵を許可リストで確かめる。
 # safe.directory は、Windows のバインドマウントが別の所有者に見えるために要る。
 # protocol の指定で ext::、file://、git://、ssh:// を塞ぎ、https だけを通す
 RUN apk add --no-cache git \

@@ -2,6 +2,8 @@ import type { ToolContext } from "../types.ts";
 
 import { config } from "../config/config.ts";
 
+import { excludeSensitiveSections, exclusionNote } from "./sensitive.ts";
+
 /**
  * GitHub の API から返る値のうち、このサーバーが読む部分だけ。
  *
@@ -190,14 +192,19 @@ export async function githubRead(args: GitHubReadArgs, ctx?: ToolContext): Promi
       ].join("\n");
     }
 
-    case "pr_diff":
-      return trim(
-        await api<string>(`/repos/${owner}/${repo}/pulls/${number(args.number)}`, {
-          accept: "application/vnd.github.diff",
+    case "pr_diff": {
+      const diff = await api<string>(`/repos/${owner}/${repo}/pulls/${number(args.number)}`, {
+        accept: "application/vnd.github.diff",
 
-          signal,
-        }),
-      );
+        signal,
+      });
+
+      // git_read の diff と files.ts と同じ判定で、秘密のファイルの区画を落とす。
+      // 落としたことは、切り詰めで消えないよう trim の後ろに書く
+      const { text, excluded } = excludeSensitiveSections(diff);
+
+      return [trim(text), exclusionNote(excluded)].filter(Boolean).join("\n");
+    }
 
     case "pr_comments": {
       const items = await api<GitHubComment[]>(

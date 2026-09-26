@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { execFileSync } from "node:child_process";
 
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 
 import { tmpdir } from "node:os";
 
@@ -38,7 +38,7 @@ const {
   parseSlug,
 } = await import("../src/tools/git.ts");
 
-const { checkValue } = await import("../src/git/exec.ts");
+const { checkValue, runGit } = await import("../src/git/exec.ts");
 
 const silent = () => {};
 
@@ -314,4 +314,207 @@ test("トークンがあるときは手がかりを足さない", async () => {
   } finally {
     config.githubToken = saved;
   }
+});
+
+// files.ts が拒む名前のうち、以前の diff の除外（pathspec の一覧）から漏れていたもの
+const SECRET_NAMES = [
+  ".env",
+  ".envrc",
+  ".git-credentials",
+  "service-account-prod.json",
+  "appsettings.Production.json",
+  ".mcp.json",
+  "settings.local.json",
+  "docker-compose.override.yml",
+  ".ssh/config",
+  "deploy/secrets/db.yml",
+];
+
+test("diff は files.ts と同じ判定で秘密のファイルを外す", async () => {
+  const dir = seedRepo("223n/secrets");
+
+  for (const [index, name] of SECRET_NAMES.entries()) {
+    mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+
+    writeFileSync(path.join(dir, name), `LEAKED_${index}\n`);
+  }
+
+  writeFileSync(path.join(dir, "app.js"), "export const visible = 1;\n");
+
+  execFileSync("git", ["add", "--all"], { cwd: dir });
+
+  const diff = await gitRead({ repo: "223n/secrets", op: "diff", staged: true });
+
+  assert.doesNotMatch(diff, /LEAKED_/);
+
+  assert.match(diff, /visible = 1/);
+
+  assert.match(diff, new RegExp(`excluded ${SECRET_NAMES.length} file\\(s\\)`));
+
+  const stat = await gitRead({ repo: "223n/secrets", op: "diff", staged: true, stat_only: true });
+
+  assert.match(stat, /app\.js \|/);
+
+  for (const name of SECRET_NAMES) {
+    assert.doesNotMatch(stat, new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} +\\|`), name);
+  }
+});
+
+test("秘密のファイルから名前を変えた差分も外す", async () => {
+  const dir = seedRepo("223n/renamed");
+
+  const lines = Array.from({ length: 20 }, (_, i) => `KEY_${i}=RENAMED_SECRET_${i}`);
+
+  writeFileSync(path.join(dir, ".env"), `${lines.join("\n")}\n`);
+
+  execFileSync("git", ["add", ".env"], { cwd: dir });
+
+  execFileSync("git", ["commit", "-m", "env"], { cwd: dir });
+
+  execFileSync("git", ["mv", ".env", "config.txt"], { cwd: dir });
+
+  // 似ている（名前の変更として見つかる）程度に 1 行だけ変える
+  writeFileSync(path.join(dir, "config.txt"), `${lines.slice(1).join("\n")}\nKEY_X=changed\n`);
+
+  execFileSync("git", ["add", "config.txt"], { cwd: dir });
+
+  const diff = await gitRead({ repo: "223n/renamed", op: "diff", staged: true });
+
+  assert.doesNotMatch(diff, /RENAMED_SECRET_0/);
+});
+
+// 実行されたら印のファイルを作るスクリプトを置き、そのパスを返す
+function markerScript(dir: string, name: string, marker: string): string {
+  const script = path.join(dir, name);
+
+  writeFileSync(script, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
+
+  chmodSync(script, 0o755);
+
+  return script;
+}
+
+const unixOnly = { skip: process.platform === "win32" ? "シェルのスクリプトを使うため" : false };
+
+test(".git/config に許可していない鍵があれば、git を動かさずに拒む", unixOnly, async () => {
+  const dir = seedRepo("223n/tampered");
+
+  const marker = path.join(dir, "..", "tampered-ran");
+
+  const script = markerScript(path.join(dir, ".."), "tampered.sh", marker);
+
+  const cases: [string, string][] = [
+    ["core.fsmonitor", script],
+    ["core.hooksPath", path.dirname(script)],
+    ["diff.external", script],
+    ["core.worktree", "/"],
+    ["include.path", "/tmp/elsewhere.gitconfig"],
+    ["url.https://example.invalid/.insteadOf", "https://github.com/"],
+    ["filter.x.clean", script],
+    ["credential.helper", script],
+    ["remote.upstream.url", "https://example.invalid/x.git"],
+  ];
+
+  for (const [key, value] of cases) {
+    execFileSync("git", ["config", "--local", key, value], { cwd: dir });
+
+    for (const op of ["status", "diff"] as const) {
+      await assert.rejects(
+        gitRead({ repo: "223n/tampered", op }),
+        (error: Error) => error.message.includes("does not allow") && error.message.toLowerCase().includes(key.toLowerCase()),
+        `${key} (${op})`,
+      );
+    }
+
+    await assert.rejects(
+      gitWrite({ repo: "223n/tampered", op: "commit", message: "x" }),
+      /does not allow/,
+      key,
+    );
+
+    execFileSync("git", ["config", "--local", "--unset-all", key], { cwd: dir });
+  }
+
+  assert.equal(existsSync(marker), false);
+
+  // 鍵を消せば、また読める
+  assert.match(await gitRead({ repo: "223n/tampered", op: "status" }), /## main/);
+});
+
+test("origin の URL が取得先と違えば拒み、同じなら通す", async () => {
+  const dir = seedRepo("223n/origin-check");
+
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/223n/other.git"], { cwd: dir });
+
+  await assert.rejects(gitRead({ repo: "223n/origin-check", op: "status" }), /remote\.origin\.url/);
+
+  execFileSync("git", ["remote", "set-url", "origin", "https://github.com/223n/origin-check.git"], { cwd: dir });
+
+  // clone と push --set-upstream が書く鍵は通す
+  execFileSync("git", ["config", "--local", "branch.main.remote", "origin"], { cwd: dir });
+
+  execFileSync("git", ["config", "--local", "branch.main.merge", "refs/heads/main"], { cwd: dir });
+
+  execFileSync("git", ["config", "--local", "remote.origin.tagOpt", "--no-tags"], { cwd: dir });
+
+  assert.match(await gitRead({ repo: "223n/origin-check", op: "status" }), /## main/);
+});
+
+test("許可リストを通り抜けても、フックと fsmonitor はコマンドの側の設定で止まる", unixOnly, async () => {
+  const dir = seedRepo("223n/overrides");
+
+  const marker = path.join(dir, "..", "overrides-ran");
+
+  const hooks = path.join(dir, "..", "overrides-hooks");
+
+  mkdirSync(hooks, { recursive: true });
+
+  markerScript(hooks, "pre-commit", marker);
+
+  const script = markerScript(hooks, "fsmonitor.sh", marker);
+
+  execFileSync("git", ["config", "--local", "core.hooksPath", hooks], { cwd: dir });
+
+  execFileSync("git", ["config", "--local", "core.fsmonitor", script], { cwd: dir });
+
+  writeFileSync(path.join(dir, "note.md"), "# note\n");
+
+  // 許可リストの確かめを通らない runGit を直に呼び、HARDENED_CONFIG だけで止まることを確かめる
+  const status = await runGit(["-C", dir, "status", "--short"]);
+
+  assert.equal(status.code, 0);
+
+  await runGit(["-C", dir, "add", "note.md"]);
+
+  const commit = await runGit(["-C", dir, "commit", "-m", "note"], {
+    env: {
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    },
+  });
+
+  assert.equal(commit.code, 0, commit.stderr);
+
+  assert.equal(existsSync(marker), false);
+});
+
+test("秘密のファイルの区画の途中で切り詰められても、切り詰めたことは残す", async () => {
+  const dir = seedRepo("223n/truncated");
+
+  // 名前の順で .env が先に来るため、6 万文字の切り詰めは .env の区画の中で起きる
+  writeFileSync(path.join(dir, ".env"), `${"BIG_SECRET=x\n".repeat(8000)}`);
+
+  writeFileSync(path.join(dir, "zz.js"), "export const z = 1;\n");
+
+  execFileSync("git", ["add", "--all"], { cwd: dir });
+
+  const diff = await gitRead({ repo: "223n/truncated", op: "diff", staged: true });
+
+  assert.doesNotMatch(diff, /BIG_SECRET/);
+
+  assert.match(diff, /truncated at \d+ characters/);
+
+  assert.match(diff, /excluded 1 file\(s\) that may contain secrets: \.env/);
 });
