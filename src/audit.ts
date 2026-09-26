@@ -34,6 +34,7 @@ const SAFE_KEYS = new Set([
   "line_numbers",
   "staged",
   "stat_only",
+  "structured",
   "temperature",
   "max_tokens",
   "language",

@@ -118,6 +118,53 @@ describe("認証なしの HTTP", () => {
     });
   }
 
+  for (const mode of modes) {
+    test(`${mode}: structured を付けたレビューだけが structuredContent を返す`, async () => {
+      const client = await connect(server.url, { mode });
+
+      const output = JSON.stringify({
+        findings: [
+          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする", uncertain: false },
+          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "", uncertain: true },
+        ],
+      });
+
+      try {
+        const structured = await client.callTool({
+          name: "ollama_review_code",
+
+          arguments: { code: "a\nb\nc", focus: `MOCK_JSON:${output}`, structured: true, model: "mock:latest" },
+        });
+
+        assert.ok(!structured.isError, text(structured));
+
+        assert.match(text(structured), /\[重大度: 高\] code:2: x を二重に解放する → free を 1 回にする/);
+
+        assert.match(text(structured), /dropped 1 finding\(s\).*code:99 \(line out of range\)/);
+
+        const content = structured.structuredContent as { findings: unknown[]; dropped: unknown[] } | undefined;
+
+        assert.equal(content?.findings.length, 1);
+
+        assert.equal(content?.dropped.length, 1);
+
+        const plain = await client.callTool({
+          name: "ollama_review_code",
+
+          arguments: { code: "a\nb\nc", model: "mock:latest" },
+        });
+
+        assert.ok(!plain.isError, text(plain));
+
+        assert.equal(plain.structuredContent, undefined);
+
+        assert.match(text(plain), /chunk0 chunk1 chunk2/);
+      } finally {
+        await client.close();
+      }
+    });
+  }
+
   test("未知の引数とファイルの引数は拒む", async () => {
     const client = await connect(server.url);
 

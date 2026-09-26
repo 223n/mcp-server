@@ -114,10 +114,16 @@ export function createServer({
         const validated = args as Record<string, unknown>;
 
         try {
+          const result = await auditedCall(tool.name, validated, () => tool.handler(validated, ctx));
+
+          // structuredContent は、ツールが求められて作ったときだけ添える。
+          // outputSchema は宣言しない。宣言すると SDK が全ての応答に structuredContent を求め、既定の応答が壊れるため
+          const structured = typeof result === "object" && result !== null ? result.structured : undefined;
+
           return {
-            content: toContent(
-              await auditedCall(tool.name, validated, () => tool.handler(validated, ctx)),
-            ),
+            content: toContent(result),
+
+            ...(structured ? { structuredContent: structured } : {}),
           };
         } catch (error) {
           return {

@@ -475,6 +475,13 @@ export function buildTools({
 
         ...saveArgs,
 
+        structured: z
+          .boolean()
+          .optional()
+          .describe(
+            "Ask the model for JSON findings ({file, line, severity, problem, fix, uncertain}) and drop the ones that point at files or lines that were not passed; the dropped count is reported. The findings also come back as structuredContent. Default false (plain text).",
+          ),
+
         language: z.string().max(100).optional(),
 
         focus: z

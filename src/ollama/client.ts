@@ -220,12 +220,17 @@ export async function ollamaChat({
   model,
   messages,
   options,
+  format,
   signal,
   onProgress,
 }: {
   model: string;
   messages: ChatMessage[];
   options?: Record<string, unknown>;
+
+  /** 出力の形（JSON Schema）。渡したときだけ送る */
+  format?: Record<string, unknown>;
+
   signal?: AbortSignal;
   onProgress?: ProgressReporter;
 }): Promise<ChatResult> {
@@ -250,7 +255,7 @@ export async function ollamaChat({
   try {
     const response = await open(
       "/api/chat",
-      { model, messages, stream: true, options },
+      { model, messages, stream: true, options, ...(format ? { format } : {}) },
       signal,
       deadline,
     );

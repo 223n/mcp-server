@@ -173,7 +173,7 @@ async function saveAndSummarise(
   result: ChatResult,
   notes: string[],
   { outputName }: { outputName?: string },
-): Promise<ToolResult> {
+): Promise<Exclude<ToolResult, string>> {
   const text = result.content.trim();
 
   const saved = await saveOutput({ name: outputName, text, model: result.model });
@@ -237,6 +237,8 @@ export async function runChat(
     maxTokens,
     save,
     outputName,
+    format,
+    postProcess,
   }: ChatRequest,
   ctx?: ToolContext,
 ): Promise<ToolResult> {
@@ -245,7 +247,7 @@ export async function runChat(
   const built =
     files?.length || inlineFiles?.length || sections?.length
       ? await buildFileContext({ files, inlineFiles, sections, lineNumbers, budget: inputBudget(maxTokens), signal })
-      : ({ block: "", notes: [] } satisfies FileContext);
+      : ({ block: "", notes: [], shown: [] } satisfies FileContext);
 
   const context = { block: built.block, notes: [...sectionNotes, ...built.notes] };
 
@@ -278,6 +280,8 @@ export async function runChat(
           ...(config.ollamaNumCtx ? { num_ctx: config.ollamaNumCtx } : {}),
         },
 
+        format,
+
         signal,
 
         onProgress: report,
@@ -307,11 +311,24 @@ export async function runChat(
     queued_ms: Math.max(0, Date.now() - requested - result.elapsedMs),
   });
 
+  // 出力を読み替える（構造化したレビューの検証など）。統計と警告は元の出力のものを使う
+  const processed = postProcess?.(result.content, built.shown ?? []);
+
+  const final = processed ? { ...result, content: processed.content } : result;
+
+  const notes = [...context.notes, ...(processed?.notes ?? [])];
+
+  const structured = processed?.structured;
+
   if (save) {
-    return await saveAndSummarise(result, context.notes, { outputName });
+    const saved = await saveAndSummarise(final, notes, { outputName });
+
+    return structured ? { ...saved, structured } : saved;
   }
 
-  return formatResult(result, context.notes);
+  const text = formatResult(final, notes);
+
+  return structured ? { text, structured } : text;
 }
 
 export async function ollamaChatTool(args: ChatToolArgs, ctx?: ToolContext): Promise<ToolResult> {
