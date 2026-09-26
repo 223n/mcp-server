@@ -53,6 +53,11 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
   - `pull_request`にはPull Requestを`{"repo": "owner/repo", "number": 12}`の形で渡します。`GITHUB_MCP_TOKEN`を設定したときだけ出ます
   - 差分の追加行と文脈の行には、新しいファイルでの行番号をサーバーが振ります。指摘は「ファイル:行」の形で返ります
   - 秘密のファイルは`git_read`の`diff`と`github_read`の`pr_diff`と同じ判定で外します。入力の予算に入らないファイルは丸ごと落とし、名前を応答とプロンプトの両方に書きます
+- `ollama_review_code`に`structured: true`を付けると、指摘をJSON（`file`、`line`、`severity`、`problem`、`fix`、`uncertain`）で受けます
+  - Ollamaの`format`で出力の形を絞ります
+  - 渡していないファイルや、渡した行の範囲の外を指す指摘をサーバーが落とし、落とした数と理由を応答に書きます。差分では、番号を振った`@@`の範囲だけを通します
+  - 残った指摘は、これまでと同じ形の文章と、MCPの`structuredContent`の両方で返ります
+  - 既定は付けない（文章のまま）です。`outputSchema`は宣言しません。宣言すると、すべての応答に`structuredContent`が要るためです
   - これはトークンを節約しません。`content`の分はどちらにせよ払います。サーバーが読めるパスなら必ず`files`を使います
 - 渡せる量の上限は、文字数ではなくトークン数の目安で測ります。日本語のコメントが多いコードは1文字がほぼ1トークンになるためです
   - 既定の上限は約24000トークンで、コンテキストを32kトークンと見込んでいます。実際の長さはOllamaの設定（`OLLAMA_CONTEXT_LENGTH`、Modelfileの`PARAMETER num_ctx`）で決まり、サーバーからは見えません
@@ -445,6 +450,7 @@ npm test
 - 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
 - `git_read`の`diff`と`github_read`の`pr_diff`から、`files`が拒むのと同じ秘密のファイルが外れること（名前の変更、引用符で囲まれた名前を含む）
 - `ollama_review_code`の`git_diff`と`pull_request`で、差分がローカルのモデルへのプロンプトにだけ入り、秘密のファイルが入らないこと。振った行番号が新しいファイルの行番号と一致すること
+- `ollama_review_code`の`structured`で、渡していないファイルや範囲の外の行を指す指摘が落ち、付けたときだけ`format`と`structuredContent`が使われること
 - 取得したリポジトリの`.git/config`に許可していない鍵（`core.fsmonitor`、`core.hooksPath`、`diff.external`、`include.path`など）があれば、gitを動かさずに拒むこと
 - 許可リストを通り抜けても、フックと`core.fsmonitor`がコマンドの側の設定で止まること
 - `github_read`と`git_read`の`log`、`diff`、`show`の結果に第三者の文章だという断り書きが付き、`status`と空の差分には付かないこと

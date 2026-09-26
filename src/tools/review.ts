@@ -1,4 +1,4 @@
-import type { ContextSection, InlineFile, ToolContext, ToolResult } from "../types.ts";
+import type { ContextSection, InlineFile, ShownPart, ToolContext, ToolResult } from "../types.ts";
 
 import type { GitDiffSource } from "./git.ts";
 
@@ -9,6 +9,8 @@ import { config } from "../config/config.ts";
 import { SYSTEM_PROMPTS } from "../config/prompts.ts";
 
 import { numberDiff } from "./diff.ts";
+
+import { checkFindings, FINDINGS_SCHEMA } from "./findings.ts";
 
 import { fenceFor, numberLines } from "./files.ts";
 
@@ -36,6 +38,7 @@ export type ReviewCodeArgs = {
   line_numbers?: boolean;
   save_output?: boolean;
   output_name?: string;
+  structured?: boolean;
   language?: string;
   focus?: string;
   model?: string;
@@ -102,21 +105,36 @@ export async function ollamaReviewCode(
 - 変わった行（+ と - の行）を中心に見る。文脈の行（先頭が空白）は理解のためだけに使う`
     : "- 行番号はコードの左側に付いている番号を使う";
 
+  const textFormat = `出力形式:
+- 指摘ごとに「[重大度: 高/中/低] ${diff.source ? "ファイル:行" : "行番号"}: 問題 → 改善案」の形で箇条書きにする
+${location}
+- 確信が持てない指摘には「要確認」と付ける
+- 指摘は重要なものから最大 10 件まで
+- 修正後のコード全体は出力しない（改善案は該当箇所の短いコード片だけにする）
+- 問題がなければ「指摘なし」とだけ書く`;
+
+  // structured では JSON で受け、渡していないファイルや行を指す指摘をサーバーで落とす
+  const jsonFormat = `出力形式:
+- JSON だけで答える。形は {"findings": [{"file": 名前, "line": 行番号, "severity": "high" か "medium" か "low", "problem": 問題, "fix": 改善案, "uncertain": 真偽値}]}
+- file には、見出し（### File:、### Inline file:、### Diff:）に書かれた名前をそのまま書く。「コード:」の下のコードは "code" と書く
+- line には、左側に付いている番号を使う。番号の無い行（- で始まる消した行）を指すときは、そのすぐ下の番号の付いた行を使う${diff.source ? "\n- 変わった行（+ と - の行）を中心に見る。文脈の行（先頭が空白）は理解のためだけに使う" : ""}
+- 確信が持てない指摘は uncertain を true にする
+- 指摘は重要なものから最大 10 件まで
+- fix には該当箇所の短いコード片か説明だけを書く（修正後のコード全体は書かない）
+- 問題がなければ findings を空の配列にする`;
+
   const prompt = `
 以下の${diff.source ?? "コード"}をレビューしてください。
 
 言語: ${args.language ?? "（ファイル拡張子から判断）"}
 重点: ${args.focus ?? "バグ、セキュリティ、保守性、パフォーマンス"}
 
-出力形式:
-- 指摘ごとに「[重大度: 高/中/低] ${diff.source ? "ファイル:行" : "行番号"}: 問題 → 改善案」の形で箇条書きにする
-${location}
-- 確信が持てない指摘には「要確認」と付ける
-- 指摘は重要なものから最大 10 件まで
-- 修正後のコード全体は出力しない（改善案は該当箇所の短いコード片だけにする）
-- 問題がなければ「指摘なし」とだけ書く
+${args.structured ? jsonFormat : textFormat}
 ${args.code ? codeBlock(args.code) : ""}
 `;
+
+  // code 引数のコードは、ファイルとは別に「code」という名前で 1 行目から渡している
+  const codeLines = args.code ? args.code.replace(/\r\n/g, "\n").split("\n").length : 0;
 
   return await runChat(
     {
@@ -143,6 +161,15 @@ ${args.code ? codeBlock(args.code) : ""}
       save: args.save_output ?? false,
 
       outputName: args.output_name,
+
+      ...(args.structured
+        ? {
+            format: FINDINGS_SCHEMA,
+
+            postProcess: (content: string, shown: ShownPart[]) =>
+              checkFindings(content, codeLines > 0 ? [{ name: "code", ranges: [[1, codeLines]] }, ...shown] : shown),
+          }
+        : {}),
     },
     ctx,
   );

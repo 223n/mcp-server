@@ -45,8 +45,12 @@ export type ResourceLink = {
  *
  * 文字列か、本文と参照の組です。src/server.ts の `toContent` がここを受けて
  * MCP のコンテンツブロックに変えます。
+ * `structured` は MCP の structuredContent として、本文と並べて返します。
+ * outputSchema は宣言しないため、付けるのは呼び出し側が求めたときだけにします
  */
-export type ToolResult = string | { text: string; links?: ResourceLink[] };
+export type ToolResult =
+  | string
+  | { text: string; links?: ResourceLink[]; structured?: Record<string, unknown> };
 
 /** ツールの handler。引数は zod の検証を通ったあとの値が渡ります */
 export type ToolHandler = (
@@ -148,12 +152,36 @@ export type ContextSection = {
   extension: string;
 };
 
+/**
+ * モデルに渡した 1 件と、そこで指してよい行の範囲（両端を含む）。
+ * 行番号を振って渡したものだけが載る。差分は番号を振った @@ ごとに 1 つの範囲になる
+ */
+export type ShownPart = {
+  name: string;
+  ranges: [number, number][];
+};
+
 /** ファイルを読んで組み立てた、モデルに渡す文脈 */
 export type FileContext = {
   block: string;
 
   /** 落としたファイルの断り書き。モデルにも利用者にも見せます */
   notes: string[];
+
+  /** 実際に渡したもの。予算で落としたものは載らない */
+  shown?: ShownPart[];
+};
+
+/** runChat の postProcess の戻り値 */
+export type ChatPostProcessed = {
+  /** 利用者に返す本文。モデルの出力の代わりに使う */
+  content: string;
+
+  /** 本文の前に置く断り書き */
+  notes: string[];
+
+  /** MCP の structuredContent として返す値 */
+  structured?: Record<string, unknown>;
 };
 
 /** runChat の引数。各ツールがツール固有の引数をこの形に直して渡します */
@@ -175,6 +203,12 @@ export type ChatRequest = {
   maxTokens?: number;
   save?: boolean;
   outputName?: string;
+
+  /** Ollama の format（JSON Schema）。出力をこの形に絞る */
+  format?: Record<string, unknown>;
+
+  /** 生成のあとに出力を読み替える。渡したもの（shown）と照らして確かめるのに使う */
+  postProcess?: (content: string, shown: ShownPart[]) => ChatPostProcessed;
 };
 
 /** 呼び出し側が本文ごと渡してくるファイル。サーバーは読みに行きません */
