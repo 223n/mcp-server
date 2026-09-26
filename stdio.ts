@@ -1,6 +1,6 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
-import { setDefaultIdentity } from "./src/audit.ts";
+import { initAuditLog, setDefaultIdentity } from "./src/audit.ts";
 
 import { createServer } from "./src/server.ts";
 
@@ -13,6 +13,10 @@ const allowWrites = await initOutput();
 
 // git のツールは stdio でだけ書き込みを許す。local: true がその印
 await initClone();
+
+// stdio の標準エラーはクライアントの側に流れ、docker logs に残らない。
+// 書き込みのツールは stdio でだけ出るため、その記録はファイルに残す
+initAuditLog();
 
 // stdout は MCP の通信路なので、ログは必ず stderr（console.error）に出す
 // stdio は同じ PC の Claude からの接続なので、監査の識別子は固定でよい

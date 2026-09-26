@@ -166,6 +166,8 @@ export function cleanEnv() {
     "CF_ACCESS_TEAM_DOMAIN",
     "CF_ACCESS_AUD",
     "CF_ACCESS_ALLOWED_EMAILS",
+    "AUDIT_LOG_DIR",
+    "AUDIT_RETENTION_DAYS",
   ]) {
     delete env[key];
   }

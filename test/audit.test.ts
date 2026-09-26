@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import { after, test } from "node:test";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+
+import { tmpdir } from "node:os";
+
+import path from "node:path";
+
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
@@ -8,8 +14,11 @@ process.chdir(WORK_DIR);
 
 after(removeCreatedTrees);
 
-const { audit, auditedCall, auditFields, currentIdentity, setDefaultIdentity, withIdentity } =
-  await import("../src/audit.ts");
+const modules = await import("../src/audit.ts");
+
+const { audit, auditedCall, auditFields, currentIdentity, setDefaultIdentity, withIdentity } = modules;
+
+const { config } = await import("../src/config/config.ts");
 
 // 監査は stderr に出る。console.error を差し替えて中身を見る
 function capture<T>(run: () => T): { result: T; lines: string[] } {
@@ -180,4 +189,106 @@ test("識別子は毎行に入る", () => {
   );
 
   assert.equal(JSON.parse(lines[0] ?? "{}").identity, "you@example.com");
+});
+
+describe("監査ログのファイル", () => {
+  const { initAuditLog, pruneAuditLogs } = modules;
+
+  let saved: { dir: string; roots: typeof config.fileRoots; days: number };
+
+  let dir: string;
+
+  const warnings: string[] = [];
+
+  const warn = (message: string) => warnings.push(message);
+
+  before(() => {
+    saved = { dir: config.auditLogDir, roots: config.fileRoots, days: config.auditRetentionDays };
+  });
+
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-audit-")));
+
+    config.auditLogDir = dir;
+
+    config.fileRoots = [];
+
+    warnings.length = 0;
+  });
+
+  afterEach(() => {
+    config.auditLogDir = "";
+
+    initAuditLog({ warn });
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  after(() => {
+    config.auditLogDir = saved.dir;
+
+    config.fileRoots = saved.roots;
+
+    config.auditRetentionDays = saved.days;
+  });
+
+  test("設定すると、標準エラーに加えて日付ごとのファイルに 1 行ずつ追記する", () => {
+    assert.equal(initAuditLog({ warn }), true);
+
+    const { lines } = capture(() => {
+      audit({ kind: "tool", tool: "git_write", ok: true, ms: 1 });
+
+      audit({ kind: "resource", ok: false, ms: 2, path: "/work/dev/x" });
+    });
+
+    assert.equal(lines.length, 2);
+
+    const files = readdirSync(dir);
+
+    assert.equal(files.length, 1);
+
+    assert.match(files[0] ?? "", /^audit-\d{8}\.jsonl$/);
+
+    const written = readFileSync(path.join(dir, files[0] ?? ""), "utf8").trim().split("\n");
+
+    assert.deepEqual(written, lines);
+  });
+
+  test("FILE_ROOTS の中は、ファイルのツールから読めてしまうため拒む", () => {
+    config.fileRoots = [{ hostPrefix: dir.toLowerCase(), hostLabel: dir, localPath: dir }];
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    assert.match(warnings.join("\n"), /inside FILE_ROOTS/);
+  });
+
+  test("無い場所と相対パスは、使わずに知らせる", () => {
+    config.auditLogDir = path.join(dir, "missing");
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    config.auditLogDir = "relative/audit";
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    assert.match(warnings.join("\n"), /does not exist/);
+
+    assert.match(warnings.join("\n"), /absolute path/);
+  });
+
+  test("残す日数より古い監査ログだけを消し、ほかのファイルには触れない", () => {
+    assert.equal(initAuditLog({ warn }), true);
+
+    config.auditRetentionDays = 30;
+
+    for (const name of ["audit-20260801.jsonl", "audit-20260830.jsonl", "audit-20260926.jsonl", "notes.txt"]) {
+      writeFileSync(path.join(dir, name), "{}\n");
+    }
+
+    const removed = pruneAuditLogs(new Date("2026-09-26T12:00:00Z"));
+
+    assert.deepEqual(removed, ["audit-20260801.jsonl"]);
+
+    assert.deepEqual(readdirSync(dir).sort(), ["audit-20260830.jsonl", "audit-20260926.jsonl", "notes.txt"]);
+  });
 });

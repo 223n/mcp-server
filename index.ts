@@ -10,7 +10,7 @@ import { toNodeHandler } from "@modelcontextprotocol/node";
 
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
-import { withIdentity } from "./src/audit.ts";
+import { initAuditLog, pruneAuditLogs, withIdentity } from "./src/audit.ts";
 
 import { config } from "./src/config/config.ts";
 
@@ -160,6 +160,28 @@ if (config.httpAllowWritesRequested && !config.httpAllowWrites) {
   );
 } else if (allowWrites) {
   console.warn("[output] Saving model output to files is enabled over HTTP (authenticated requests only).");
+}
+
+// 監査ログのファイルの書き出し先を確かめる。古いファイルを消すのは HTTP のプロセスだけにする。
+// stdio のプロセスはクライアントごとに起動し直されるため、消す役を持たせるとぶつかる
+if (initAuditLog({ warn: (message) => console.warn(message) })) {
+  const prune = (): void => {
+    try {
+      const removed = pruneAuditLogs();
+
+      if (removed.length > 0) {
+        console.log(`[audit] removed ${removed.length} audit log file(s) older than ${config.auditRetentionDays} days`);
+      }
+    } catch (error) {
+      console.warn("[audit] could not prune audit logs:", error instanceof Error ? error.message : error);
+    }
+  };
+
+  prune();
+
+  setInterval(prune, 24 * 60 * 60 * 1000).unref();
+
+  console.log(`[audit] writing audit logs to ${config.auditLogDir} (kept ${config.auditRetentionDays} days)`);
 }
 
 // git のツールも同じように起動時に確かめる。

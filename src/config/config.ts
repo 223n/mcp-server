@@ -124,6 +124,10 @@ export const config = {
 
   httpAllowWrites: env.HTTP_ALLOW_WRITES && httpAuthConfigured,
 
+  auditLogDir: env.AUDIT_LOG_DIR.trim().replace(/\\/g, "/").replace(/\/+$/, ""),
+
+  auditRetentionDays: env.AUDIT_RETENTION_DAYS,
+
   mcpAuthToken: env.MCP_AUTH_TOKEN,
 
   cfAccessTeamDomain,

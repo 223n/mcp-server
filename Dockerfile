@@ -24,6 +24,10 @@ RUN apk add --no-cache git \
        > /etc/git/server.gitconfig \
     && chown node:node /tmp/git-home
 
+# 監査ログの書き出し先。docker-compose.yml が名前付きボリュームをここにマウントする。
+# 新しいボリュームは、イメージのこのディレクトリの持ち主（node）を引き継ぐ
+RUN mkdir -p /var/log/ollama-mcp && chown node:node /var/log/ollama-mcp
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./

@@ -131,6 +131,8 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
 | `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
 | `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
+| `AUDIT_LOG_DIR`                          | `docker-compose.yml`で設定                                     | 監査ログを1日1ファイルで書き出す先（コンテナーの中の絶対パス）です。空なら標準エラーにだけ出します。`FILE_ROOTS`の中は拒みます                   |
+| `AUDIT_RETENTION_DAYS`                   | `30`                                                           | 監査ログのファイルを残す日数です                                                                                                                   |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
 - 無通信の上限（`OLLAMA_TIMEOUT`）は300秒のままです。全体の上限だけを延ばし、Ollamaが固まったときは早く気付けるようにしています
@@ -271,12 +273,17 @@ GitHubが認証のない要求に404を返すためで、名前の打ち間違�
 ```
 
 - 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
+- `AUDIT_LOG_DIR`を設定すると、標準エラーに加えて`audit-YYYYMMDD.jsonl`（UTCの日付）へ1行ずつ追記します
+  - stdioの入口は`docker exec`で起動する別のプロセスで、その標準エラーはClaude DesktopやClaude Codeの側に流れ、`docker logs`には残りません。書き込みのツール（`git_write`、`github_write`）はstdioでだけ出るため、その記録はこのファイルに残します
+  - `docker-compose.yml`は、名前付きボリューム`audit-log`を`/var/log/ollama-mcp`にマウントし、既定でここに書きます。`FILE_ROOTS`の外に置き、ファイルのツールから読めないようにしています。`FILE_ROOTS`の中を指定すると、起動時に警告してファイルには書きません
+  - HTTPとstdioの両方のプロセスが同じファイルに追記します。古いファイルは、HTTPのプロセスが起動時と1日ごとに消します（`AUDIT_RETENTION_DAYS`、既定30日）
+  - 読むときは`docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl'`です。`jq`を通すと絞り込めます
 - `identity`は、Cloudflare AccessのJWTの`email`、サービストークンなら`service:<クライアントID>`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
 - `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
   - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
   - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
 - `resources/read`にはツール名がなく、ツールの記録に載りません。読み取りの経路としては同じ重さなので、`"kind":"resource"`として別に記録します
-- Dockerでは`docker logs ollama-mcp`で見られます。ログは10MBを3世代まで残します
+- HTTPの入口の記録は、`docker logs ollama-mcp`でも見られます。ログは10MBを3世代まで残します
 
 ### 同時に走らせる数を絞る
 
@@ -419,6 +426,7 @@ npm test
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
 - `resources/read`で復号できないURI（壊れた符号化、NUL）を拒んだときも、監査ログに残ること
+- 監査ログを日付ごとのファイルにも追記し、`FILE_ROOTS`の中の書き出し先を拒み、古いファイルだけを消すこと。CIでは、stdioの呼び出しの記録が名前付きボリュームに残ることを確かめます
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
