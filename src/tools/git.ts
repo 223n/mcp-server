@@ -123,7 +123,11 @@ export async function initClone({ warn = console.error }: Reporter = {}): Promis
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
-    warn(`[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}`);
+    // docker-compose.yml は C:/dev を読み取り専用でマウントし、書き込み先だけを読み書きできる形で重ねている
+    warn(
+      `[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}. ` +
+        "In Docker, mount it read-write under volumes in docker-compose.yml.",
+    );
 
     return false;
   }

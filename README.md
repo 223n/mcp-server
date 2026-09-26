@@ -192,6 +192,7 @@ HTTPでも、`files`引数と`list_files`を使えます。
 応答にはパスと先頭と末尾の抜粋だけが返るため、Claudeが全文を読まずに済みます。
 
 1. ホスト側に書き出し先のディレクトリを作ります。コンテナーの`node`ユーザーが書ける権限にします
+    - `docker-compose.yml`は`C:\dev`を読み取り専用でマウントし、`C:\dev\ollama-out`だけを読み書きできる形で重ねています。別の場所にするときは、`docker-compose.yml`の`volumes`も合わせます
 1. `.env`に`OUTPUT_DIR=C:\dev\ollama-out=/work/dev/ollama-out`のように書きます
 1. HTTPでも使うときは、認証を設定したうえで`HTTP_ALLOW_WRITES=true`を足します
 1. `docker compose up -d`でコンテナーを作り直します。`ollama_health`の`output saving`が`enabled`になれば有効です
@@ -218,6 +219,7 @@ HTTPでも、`files`引数と`list_files`を使えます。
 `CLONE_ROOT`を設定すると、GitHubのリポジトリを取得して、そのままローカルのモデルにレビューさせられます。
 
 1. ホスト側に取得先のディレクトリを作ります（例:`C:\dev\claude`）
+    - `docker-compose.yml`は`C:\dev\claude`を読み書きできる形でマウントしています。別の場所にするときは、`docker-compose.yml`の`volumes`も合わせます
 1. `.env`に`CLONE_ROOT`と`GIT_ALLOWED_OWNERS`を書きます
 1. privateのリポジトリを扱うときは、fine-grainedのトークンを`GITHUB_MCP_TOKEN`に書きます。対象のリポジトリは列挙して絞ります
 1. commitとpushまで任せるときは、`GIT_ALLOW_WRITE=true`、`GIT_USER_NAME`、`GIT_USER_EMAIL`を足します
@@ -289,6 +291,11 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
 
 - `.env`はコミットしません。`.gitignore`で外しています
 - Ollama（11434番ポート）には認証がありません。LANやインターネットへ直に公開しないでください
+- コンテナーは権限を絞って動かします（`docker-compose.yml`）
+  - ルートのファイルシステムは読み取り専用で、書けるのは`/tmp`（メモリ上）と書き込み先だけです
+  - `C:\dev`は読み取り専用でマウントし、`CLONE_ROOT`と`OUTPUT_DIR`の場所だけを読み書きできる形で重ねます。サーバーの約束が外れたとき（gitやNodeの不具合など）に書き換えられる範囲を、この2つに絞るためです
+  - ケーパビリティはすべて外し、特権の昇格を禁じ、プロセスの数に上限を設けます
+  - CIも同じ絞り込みでコンテナーを起動し、HTTPとstdioが応答することを確かめます
 - HTTPでファイルを読めるのは、`HTTP_ALLOW_FILES=true`に加えて認証を設定したときだけです
 - ファイルの読み込みは`FILE_ROOTS`の配下だけに限ります
   - `.env`、`.envrc`、`.npmrc`、秘密鍵、`app_local.php`などの秘密のファイルと、`.git`や`.ssh`などの配下は拒みます
@@ -419,6 +426,7 @@ npm test
 - 失敗した要求が1分に60回を超えると429で断り、成功した要求は数えないこと
 - `list_files`のグロブが、`*`を並べた意地の悪いパターンでもすぐ終わること（ReDoSを防ぐ）
 - サーバーが読む環境変数を、`docker-compose.yml`がすべてコンテナーに渡していること
+- `docker-compose.yml`がコンテナーの権限を絞り、`C:\dev`を読み取り専用にして、書き込み先だけを読み書きできる形で重ねていること。CIが同じ絞り込みで起動すること
 - 環境変数の不正な値で、起動時に止まること
 
 CIは、Node 22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。
