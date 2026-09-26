@@ -180,3 +180,104 @@ test("待ち行列を 0 にすると、上限を超えた時点で断る", async
 
   await running;
 });
+
+test("すでに中断された呼び出しは、並ばせずに断る", async () => {
+  const limiter = createLimiter({ max: 1, maxQueue: 1 });
+
+  const gate = deferred();
+
+  const first = limiter.run(() => gate.promise);
+
+  const aborted = new AbortController();
+
+  aborted.abort();
+
+  let deadRan = false;
+
+  await assert.rejects(
+    limiter.run(
+      async () => {
+        deadRan = true;
+
+        return "dead";
+      },
+      { signal: aborted.signal },
+    ),
+    /Cancelled by the MCP client/,
+  );
+
+  // 待ち行列の席をふさがないので、生きている呼び出しは並べる
+  assert.equal(limiter.stats().queued, 0);
+
+  const live = limiter.run(async () => "live");
+
+  await tick();
+
+  assert.equal(limiter.stats().queued, 1);
+
+  gate.resolve("done");
+
+  assert.equal(await first, "done");
+
+  assert.equal(await live, "live");
+
+  assert.equal(deadRan, false);
+});
+
+// 枠を待っていた呼び出しに渡してから、それが動き出すまでの間に新しい呼び出しが来ても、
+// 上限を超えて走らないこと。割り込みの位置はマイクロタスクの深さで変わるため、深さを変えて試す
+test("枠を渡した直後に来た呼び出しは、上限を超えて走らない", async () => {
+  for (let depth = 0; depth <= 6; depth += 1) {
+    const limiter = createLimiter({ max: 1, maxQueue: 8 });
+
+    let running = 0;
+
+    let peak = 0;
+
+    const work = (gate: Deferred) => async () => {
+      running += 1;
+
+      peak = Math.max(peak, running);
+
+      try {
+        return await gate.promise;
+      } finally {
+        running -= 1;
+      }
+    };
+
+    const gates = [deferred(), deferred(), deferred()];
+
+    const [gateA, gateB, gateC] = gates as [Deferred, Deferred, Deferred];
+
+    const runs = [limiter.run(work(gateA)), limiter.run(work(gateB))];
+
+    await tick();
+
+    gateA.resolve("a");
+
+    const late = new Promise<string>((resolve, reject) => {
+      const arrive = (remaining: number): void => {
+        if (remaining === 0) {
+          limiter.run(work(gateC)).then(resolve, reject);
+        } else {
+          queueMicrotask(() => arrive(remaining - 1));
+        }
+      };
+
+      arrive(depth);
+    });
+
+    await tick();
+
+    assert.ok(limiter.stats().active <= 1, `depth ${depth}: active ${limiter.stats().active}`);
+
+    gateB.resolve("b");
+
+    gateC.resolve("c");
+
+    assert.deepEqual(await Promise.all([...runs, late]), ["a", "b", "c"]);
+
+    assert.equal(peak, 1, `depth ${depth}: ${peak} ran at once`);
+  }
+});
