@@ -224,15 +224,30 @@ export type ChatToolArgs = {
 
 // 各ツール共通の実行処理
 export async function runChat(
-  { model, system, prompt, files, inlineFiles, lineNumbers, temperature, maxTokens, save, outputName }: ChatRequest,
+  {
+    model,
+    system,
+    prompt,
+    files,
+    inlineFiles,
+    sections,
+    sectionNotes = [],
+    lineNumbers,
+    temperature,
+    maxTokens,
+    save,
+    outputName,
+  }: ChatRequest,
   ctx?: ToolContext,
 ): Promise<ToolResult> {
   const signal = ctx?.mcpReq?.signal;
 
-  const context =
-    files?.length || inlineFiles?.length
-      ? await buildFileContext({ files, inlineFiles, lineNumbers, budget: inputBudget(maxTokens), signal })
+  const built =
+    files?.length || inlineFiles?.length || sections?.length
+      ? await buildFileContext({ files, inlineFiles, sections, lineNumbers, budget: inputBudget(maxTokens), signal })
       : ({ block: "", notes: [] } satisfies FileContext);
+
+  const context = { block: built.block, notes: [...sectionNotes, ...built.notes] };
 
   // 落としたファイルがあることはモデルにも伝える。
   // 伝えないと、渡していないファイルまで見たつもりで「指摘なし」と答えてしまう

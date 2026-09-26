@@ -115,7 +115,9 @@ export function unquotePath(text: string): string {
 }
 
 // 区画の始まり。マージの差分（--cc、--combined）も区画として扱い、前の区画に紛れ込ませない
-const HEADER = /^diff --(git|cc|combined) /;
+export const DIFF_HEADER = /^diff --(git|cc|combined) /;
+
+const HEADER = DIFF_HEADER;
 
 // 引用符で始まる文字列の、閉じる引用符の位置。"\"" は閉じる引用符として数えない
 function closingQuote(text: string): number {
@@ -133,7 +135,7 @@ function closingQuote(text: string): number {
 // "diff --git a/x b/y" の x と y の候補を返す。
 // 引用符が無く名前に空白を含むと区切りが一意に決まらないため、候補をすべて返す。
 // 判定は安全側（どれか 1 つでも当たれば外す）に倒す
-function headerPaths(line: string): string[] {
+export function headerPaths(line: string): string[] {
   const rest = line.replace(HEADER, "");
 
   if (rest.startsWith('"')) {
@@ -189,7 +191,31 @@ function displayPath(p: string): string {
 }
 
 /**
- * unified diff から、秘密のファイルに当たる区画（"diff --git" から次の "diff --git" の手前まで）を落とす。
+ * unified diff を区画（"diff --git" から次の "diff --git" の手前まで）に分ける。
+ * 最初の見出しより前の行（空行など）は、先頭の区画になる
+ */
+export function splitDiffSections(diff: string): string[][] {
+  const sections: string[][] = [];
+
+  let section: string[] = [];
+
+  for (const line of diff.split("\n")) {
+    if (HEADER.test(line) && section.length > 0) {
+      sections.push(section);
+
+      section = [];
+    }
+
+    section.push(line);
+  }
+
+  sections.push(section);
+
+  return sections;
+}
+
+/**
+ * unified diff から、秘密のファイルに当たる区画を落とす。
  * 名前を変えた区画は、元の名前と新しい名前のどちらかが当たれば落とす
  */
 export function excludeSensitiveSections(diff: string): { text: string; excluded: string[] } {
@@ -197,9 +223,7 @@ export function excludeSensitiveSections(diff: string): { text: string; excluded
 
   const excluded: string[] = [];
 
-  let section: string[] = [];
-
-  const flush = (): void => {
+  for (const section of splitDiffSections(diff)) {
     const hit = sectionPaths(section).find((p) => isSensitivePath(p));
 
     if (hit === undefined) {
@@ -207,19 +231,7 @@ export function excludeSensitiveSections(diff: string): { text: string; excluded
     } else if (!excluded.includes(displayPath(hit))) {
       excluded.push(displayPath(hit));
     }
-
-    section = [];
-  };
-
-  for (const line of diff.split("\n")) {
-    if (HEADER.test(line) && section.length > 0) {
-      flush();
-    }
-
-    section.push(line);
   }
-
-  flush();
 
   return { text: kept.join("\n"), excluded };
 }

@@ -29,6 +29,7 @@ model: sonnet
 1. 前提を知らないローカルのモデルでもわかるよう、目的、条件、出力の形をすべてプロンプトに書きます
 1. 用途に合うツールを使います
    - コードの確認: `ollama_review_code`（既定は14Bで、行番号付きの指摘が返ります）
+   - 差分の確認: `ollama_review_code`の`git_diff`（取得したリポジトリ）か`pull_request`を使います。差分を写して渡さないでください。指摘は「ファイル:行」の形で返ります
    - エラーの解析: `ollama_explain_error`
    - そのほか: `ollama_chat`（`profile`にphp、docker、git、code_reviewを指定できます）
    - 長い下書きや翻訳で`save_output`が使えるときは、それを使います。応答にはパスと抜粋だけが返るため、全文を読まずに済みます。中身は`read_file`で必要な範囲だけ読みます

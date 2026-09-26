@@ -401,19 +401,12 @@ function progressFor(
   };
 }
 
-/**
- * 差分を読み、秘密のファイルの区画を落とす。
- *
- * 判定は files.ts と同じ isSensitivePath を使う。pathspec の一覧を別に持つと、
- * files では読めない秘密が diff からは読める、という抜け道になるため。
- * --no-ext-diff と --no-textconv は、.git/config の diff.external と diff.<名前>.textconv を効かせないため
- */
-async function readDiff(
+// "--cached" のようなオプションは値として拒むため、真偽値の引数で受ける
+function diffRunner(
   run: (argv: string[]) => Promise<string>,
-  { ref, staged, stat_only: statOnly }: GitReadArgs,
-): Promise<string> {
-  // "--cached" のようなオプションは値として拒むため、真偽値の引数で受ける
-  const diff = (options: string[], pathspecs: string[] = []) =>
+  { ref, staged }: { ref?: string; staged?: boolean },
+): (options: string[], pathspecs?: string[]) => Promise<string> {
+  return (options, pathspecs = []) =>
     run([
       "diff",
       "--no-ext-diff",
@@ -425,13 +418,59 @@ async function readDiff(
       ".",
       ...pathspecs,
     ]);
+}
+
+// 差分の本文を読み、秘密のファイルの区画を落とす。
+// 切り詰めの但し書きは、落とす区画と一緒に消えないよう、先に外してから notes に戻す
+async function readPatch(
+  diff: (options: string[]) => Promise<string>,
+): Promise<{ text: string; notes: string[] }> {
+  const { body, truncated } = splitTruncation(await diff([]));
+
+  const { text, excluded } = excludeSensitiveSections(body);
+
+  return { text, notes: [truncated ? truncationNote() : "", exclusionNote(excluded)].filter(Boolean) };
+}
+
+/** ollama_review_code の git_diff。src/tools/index.ts の inputSchema と対で保つこと */
+export type GitDiffSource = {
+  repo: string;
+  ref?: string;
+  staged?: boolean;
+};
+
+/**
+ * 取得したリポジトリの差分を、Claude に返さずにローカルのモデルへ渡すために読む。
+ * 防御は git_read の diff とまったく同じ経路（requireClone、checkValue、秘密のファイルの除外）を通す
+ */
+export async function readCloneDiff(
+  source: GitDiffSource,
+  signal?: AbortSignal,
+): Promise<{ text: string; notes: string[] }> {
+  const target = await requireClone(source.repo, signal);
+
+  const run = (argv: string[]) => git(["-C", target.dir, ...argv], { signal });
+
+  return await readPatch(diffRunner(run, source));
+}
+
+/**
+ * 差分を読み、秘密のファイルの区画を落とす。
+ *
+ * 判定は files.ts と同じ isSensitivePath を使う。pathspec の一覧を別に持つと、
+ * files では読めない秘密が diff からは読める、という抜け道になるため。
+ * --no-ext-diff と --no-textconv は、.git/config の diff.external と diff.<名前>.textconv を効かせないため
+ */
+async function readDiff(
+  run: (argv: string[]) => Promise<string>,
+  { ref, staged, stat_only: statOnly }: GitReadArgs,
+): Promise<string> {
+  const diff = diffRunner(run, { ref, staged });
 
   if (!statOnly) {
-    const { body, truncated } = splitTruncation(await diff([]));
+    const { text, notes } = await readPatch(diff);
 
-    const { text, excluded } = excludeSensitiveSections(body);
-
-    return [text, truncated ? truncationNote() : "", exclusionNote(excluded)].filter(Boolean).join("\n");
+    return [text, ...notes].join("\n");
   }
 
   // 要約（--stat）は区画に分かれないため、先に変わったパスを読み、当たるものを名前で外す。

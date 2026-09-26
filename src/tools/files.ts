@@ -4,7 +4,7 @@ import { open, readdir, realpath, stat } from "node:fs/promises";
 
 import path from "node:path";
 
-import type { FileContext, InlineFile, Root } from "../types.ts";
+import type { ContextSection, FileContext, InlineFile, Root } from "../types.ts";
 
 import { config } from "../config/config.ts";
 
@@ -19,12 +19,15 @@ type ResolvedPath = { local: string; root: Root; realRoot: string };
 type Target = { local: string; display: string; start?: number; end?: number };
 
 /** 読み終えた 1 ファイル分の材料。render がこれをフェンスで囲む */
-type Part = { display: string; label: string; body: string; extension: string };
+type Part = ContextSection;
 
 /** 幅優先でたどるときの 1 段。depth は起点の直下を 0 とした深さ */
 type Crawl = { dir: string; relative: string; depth: number };
 
 const MAX_FILE_BYTES = 512 * 1024;
+
+// 予算に入らず落としたファイルの名前を、断り書きに並べる上限
+const MAX_OMITTED_NAMES = 30;
 
 // 渡すファイルに使ってよい量の既定の目安（コンテキストを 32k トークンと見込んだ場合）。
 // 残りは system プロンプト、利用者の指示、出力（既定 4096）に充てる。
@@ -680,12 +683,17 @@ function renderTruncated(part: Part, budget: number): string {
 export async function buildFileContext({
   files = [],
   inlineFiles = [],
+  sections = [],
   lineNumbers = false,
   budget = DEFAULT_PROMPT_BUDGET,
   signal,
 }: {
   files?: string[];
   inlineFiles?: InlineFile[];
+
+  /** サーバーが組み立てた差分など。本題なので、files と inline_files より先に予算を使う */
+  sections?: ContextSection[];
+
   lineNumbers?: boolean;
 
   /** 渡すファイルに使ってよいトークン数の目安 */
@@ -728,6 +736,24 @@ export async function buildFileContext({
   let used = 0;
 
   let first: Part | undefined;
+
+  for (const part of sections) {
+    first ??= part;
+
+    const text = render(part);
+
+    const tokens = estimateTokens(text);
+
+    if (used + tokens > budget) {
+      omitted.push(part.display);
+
+      continue;
+    }
+
+    used += tokens;
+
+    blocks.push(text);
+  }
 
   for (const target of unique) {
     signal?.throwIfAborted();
@@ -791,8 +817,14 @@ export async function buildFileContext({
   }
 
   if (omitted.length > 0) {
+    // 差分は数百のファイルに及ぶことがある。名前をすべて並べると、断り書きだけで Claude のトークンを使う
+    const names =
+      omitted.length > MAX_OMITTED_NAMES
+        ? `${omitted.slice(0, MAX_OMITTED_NAMES).join(", ")}, and ${omitted.length - MAX_OMITTED_NAMES} more`
+        : omitted.join(", ");
+
     notes.push(
-      `WARNING: ${omitted.length} of ${unique.length + inlineFiles.length} files were omitted because the input budget (${budget} tokens) was reached: ${omitted.join(", ")}. Split them across several calls.`,
+      `WARNING: ${omitted.length} of ${sections.length + unique.length + inlineFiles.length} files were omitted because the input budget (${budget} tokens) was reached: ${names}. Split them across several calls.`,
     );
   }
 

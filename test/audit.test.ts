@@ -81,6 +81,17 @@ test("渡したファイルのパスは残す", () => {
   assert.deepEqual(fields.paths, ["x.md"]);
 });
 
+test("レビューした差分の出どころは、中の鍵も絞って残す", () => {
+  const fields = auditFields({
+    git_diff: { repo: "223n/mcp-server", ref: "main", staged: true, prompt: "secret" },
+    pull_request: { repo: "223n/mcp-server", number: 7 },
+  });
+
+  assert.deepEqual(fields.git_diff, { repo: "223n/mcp-server", ref: "main", staged: true });
+
+  assert.deepEqual(fields.pull_request, { repo: "223n/mcp-server", number: 7 });
+});
+
 test("パスが多いときは件数を添えて切る", () => {
   const files = Array.from({ length: 30 }, (_, i) => `C:\\dev\\f${i}.php`);
 

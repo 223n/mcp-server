@@ -131,6 +131,23 @@ export type Usage = {
   queued_ms: number;
 };
 
+/**
+ * ファイルの読み込みを通さずにサーバーが組み立てた、モデルに渡す 1 件（差分の 1 ファイル分など）。
+ * 予算に入らなければ、files と同じく丸ごと落として断り書きに名前を出す
+ */
+export type ContextSection = {
+  /** 落としたときに断り書きへ出す名前 */
+  display: string;
+
+  /** 見出しの 1 行 */
+  label: string;
+
+  body: string;
+
+  /** フェンスに付ける言語の名前 */
+  extension: string;
+};
+
 /** ファイルを読んで組み立てた、モデルに渡す文脈 */
 export type FileContext = {
   block: string;
@@ -146,6 +163,13 @@ export type ChatRequest = {
   prompt: string;
   files?: string[];
   inlineFiles?: InlineFile[];
+
+  /** サーバーが組み立てた差分など。files より先に予算を使う */
+  sections?: ContextSection[];
+
+  /** sections の断り書き（秘密のファイルを落とした、差分を切り詰めた）。モデルと利用者の両方に見せる */
+  sectionNotes?: string[];
+
   lineNumbers?: boolean;
   temperature?: number;
   maxTokens?: number;
