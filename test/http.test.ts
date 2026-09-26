@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 
+import { request } from "node:http";
+
 import { tmpdir } from "node:os";
 
 import path from "node:path";
@@ -190,8 +192,8 @@ describe("認証なしの HTTP", () => {
     assert.match(await unknownMethod.text(), /-32601/);
   });
 
-  test("既定では 3060 秒までのリクエストを受け付ける", async () => {
-    assert.match(server.output(), /\[http\] request timeout: 3060 s/);
+  test("既定では、要求を受け取り終えるまでを 60 秒で打ち切る", async () => {
+    assert.match(server.output(), /\[http\] request timeout: 60 s/);
   });
 
   test("許可していない Host と Origin は 403", async () => {
@@ -248,6 +250,49 @@ describe("トークンで認証する HTTP（ファイルの読み込みあり�
     const response = await post(server.url, { body: INITIALIZE });
 
     assert.equal(response.status, 401);
+  });
+
+  test("トークンがなければ、本文を読み終える前に 401 を返す", async () => {
+    // 本文の長さだけを大きく名乗り、中身は送らない。
+    // 認証より先に本文を解析すると、送り終えるまで（requestTimeout まで）応答が返らない
+    const status = await new Promise<number>((resolve, reject) => {
+      const { hostname, port } = new URL(server.url);
+
+      const req = request(
+        {
+          hostname,
+          port,
+          path: "/mcp",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": "1000000" },
+        },
+        (res) => {
+          res.resume();
+
+          resolve(res.statusCode ?? 0);
+
+          req.destroy();
+        },
+      );
+
+      req.on("error", (error) => {
+        // 応答を受け取ったあとで接続を切ったときの失敗は無視する
+        if (!req.destroyed) {
+          reject(error);
+        }
+      });
+
+      req.setTimeout(5000, () => reject(new Error("no response before the body was sent")));
+
+      req.write('{"jsonrpc":');
+    });
+
+    assert.equal(status, 401);
+
+    // 壊れた JSON も、認証の無い相手には解析の結果（400）ではなく 401 を返す
+    const broken = await post(server.url, { body: '{"jsonrpc":' });
+
+    assert.equal(broken.status, 401);
   });
 
   test("トークンがあれば、ファイルのツールを使える", async () => {
@@ -563,12 +608,6 @@ describe("タイムアウト", () => {
     await ollama.close();
   });
 
-  test("Node の既定より長いリクエストを切らないようにしている", async () => {
-    // Node の requestTimeout は既定で 300 秒。これを上げないと、
-    // OLLAMA_MAX_DURATION をいくら大きくしても 300 秒で 408 になる
-    assert.match(server.output(), /\[http\] request timeout: 61 s/);
-  });
-
   test("途中まで生成された部分を警告付きで返す", async () => {
     const client = await connect(server.url);
 
@@ -591,6 +630,43 @@ describe("タイムアウト", () => {
       }
 
       assert.ok(ollama.state.aborted > 0, "mock Ollama did not see the request aborted");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("requestTimeout は応答の長さに効かない", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    // 要求を受け取り終えるまでの上限を 2 秒にし、約 10 秒かかる生成を流す
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, HTTP_REQUEST_TIMEOUT: "2000" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  test("requestTimeout より長い生成も、途中で切れずに最後まで返る", async () => {
+    assert.match(server.output(), /\[http\] request timeout: 2 s/);
+
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_SLOW" } });
+
+      assert.ok(!result.isError, text(result));
+
+      assert.match(text(result), /chunk49/);
+
+      assert.match(text(result), /done_reason=stop/);
     } finally {
       await client.close();
     }

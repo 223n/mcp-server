@@ -79,10 +79,10 @@ export const config = {
 
   ollamaMaxQueue: env.OLLAMA_MAX_QUEUE,
 
-  // Node の HTTP サーバーは requestTimeout が既定で 300 秒で、これを超えたリクエストを
-  // 408 にして切る。OLLAMA_MAX_DURATION をいくら上げても、ここで頭打ちになる。
-  // 生成の上限より少し長くしておく
-  httpRequestTimeout: env.OLLAMA_MAX_DURATION + 60000,
+  // Node の requestTimeout は「要求を受け取り終えるまで」の上限で、応答を返している時間には効かない。
+  // 以前は OLLAMA_MAX_DURATION + 60 秒（既定で 3060 秒）にしていたが、長い生成を守る効果は無く、
+  // 本文をゆっくり送る相手に接続を約 51 分つかませる余地だけを作っていた
+  httpRequestTimeout: env.HTTP_REQUEST_TIMEOUT,
 
   port: env.PORT,
 

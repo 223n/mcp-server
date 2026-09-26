@@ -91,7 +91,10 @@ const app = createMcpExpressApp({
 const auth = createAuthMiddleware();
 
 if (auth) {
-  app.use("/mcp", auth);
+  // createMcpExpressApp は本文の解析（express.json、上限 4 MB）を先に積んでいる。
+  // app に足すとその後ろになり、認証の無い相手の本文まで読み終えてから 401 を返すことになる。
+  // root に足して、本文を読む前に断る。Host と Origin の確かめは、認証を通ったものに対して行う
+  root.use("/mcp", auth);
 } else {
   console.warn(
     "[auth] HTTP /mcp has no authentication. Set MCP_AUTH_TOKEN or CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD to require it.",
@@ -203,14 +206,14 @@ const httpServer = root.listen(config.port, config.host, () => {
   console.log(`ollama-mcp listening on http://${config.host}:${config.port}/mcp`);
 });
 
-// Node の既定（300 秒）のままだと、長い生成が 408 で切られる。
+// 要求を受け取り終えるまでの上限。応答を返している時間（生成の時間）には効かない。
 // headersTimeout は requestTimeout より短くしておく必要がある
 httpServer.requestTimeout = config.httpRequestTimeout;
 
 httpServer.headersTimeout = Math.min(60000, config.httpRequestTimeout - 1000);
 
 console.log(
-  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (OLLAMA_MAX_DURATION + 60 s)`,
+  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (HTTP_REQUEST_TIMEOUT, receiving the request only)`,
 );
 
 let stopping = false;

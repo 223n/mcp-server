@@ -59,6 +59,11 @@ export const env = {
 
   OLLAMA_MAX_QUEUE: toInt("OLLAMA_MAX_QUEUE", 8, 0, 1000),
 
+  // HTTP の要求を受け取り終えるまでの上限（Node の requestTimeout）。
+  // 応答を返している時間（生成の時間）には効かないため、OLLAMA_MAX_DURATION とは結び付けない。
+  // 長くすると、本文をゆっくり送り続ける相手に、接続をその間つかまれる
+  HTTP_REQUEST_TIMEOUT: toInt("HTTP_REQUEST_TIMEOUT", 60000, 2000, MAX_TIMER_MS),
+
   PORT: toInt("PORT", 3000, 1, 65535),
 
   HOST: process.env.HOST || "0.0.0.0",
