@@ -17,7 +17,7 @@ name: リリース
 # 一度だけ要る設定:
 #   Settings > Actions > General > Workflow permissions で
 #   「Allow GitHub Actions to create and approve pull requests」を有効にする。
-#   これが無いと gh pr create が拒まれる。
+#   これが無いと gh pr create が拒まれる。拒まれたときは、押した release ブランチをワークフローが消す。
 on:
   workflow_dispatch:
     inputs:
@@ -127,10 +127,20 @@ jobs:
             echo "::error::タグ ${TAG} はすでにある"
             exit 1
           fi
-          # release ブランチは同時に1つだけ。別の版が開いたままだと、後の PR が package.json で衝突する
-          if git ls-remote --exit-code --heads origin 'refs/heads/release/*' >/dev/null 2>&1; then
-            echo "::error::release/* ブランチが残っている。前のリリースの PR をマージするか閉じてから実行する"
-            git ls-remote --heads origin 'refs/heads/release/*'
+          # release ブランチは同時に1つだけ。別の版が開いたままだと、後の PR が package.json で衝突する。
+          # 自動で消えるのはマージした PR の head だけで、PR を閉じてもブランチは残る。
+          # ブランチごとに、開いている PR をマージするか、PR が無ければブランチを消すよう案内する
+          remaining="$(git ls-remote --heads origin 'refs/heads/release/*' | sed 's#^.*refs/heads/##')"
+          if [ -n "${remaining}" ]; then
+            echo "::error::release/* ブランチが残っている。前のリリースの PR をマージするか、PR が無ければブランチを消してから実行する"
+            while IFS= read -r left; do
+              url="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${left}" --state open --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+              if [ -n "${url}" ]; then
+                echo "${left}: 開いている PR をマージする: ${url}"
+              else
+                echo "${left}: 開いている PR が無い。消す: git push origin --delete ${left}"
+              fi
+            done <<< "${remaining}"
             exit 1
           fi
 
@@ -239,6 +249,7 @@ jobs:
           npm test
 
       - name: コミットして押す
+        id: push
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BRANCH: ${{ steps.version.outputs.branch }}
@@ -306,6 +317,28 @@ jobs:
             echo "- ブランチ: \`${BRANCH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: PRを開けなかったらリリースブランチを消す
+        # 押したあとに PR を開けないと、ブランチだけが残り、次の実行が「release/* ブランチが残っている」で止まる。
+        # たとえば「Allow GitHub Actions to create and approve pull requests」が無効のときである。
+        # 途中で取り消されたときも消す。ただし PR が開いていれば消さない
+        if: always() && steps.push.outcome == 'success' && steps.pr.outcome != 'success'
+        env:
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          if ! prs="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${BRANCH}" --state open --json url --jq '.[].url')"; then
+            echo "::warning::PR の有無を確かめられなかったため、ブランチ ${BRANCH} を残した。PR が無ければ消してから実行し直す: git push origin --delete ${BRANCH}"
+            exit 0
+          fi
+          if [ -n "${prs}" ]; then
+            echo "::notice::PR が開いているため、ブランチ ${BRANCH} は残す: ${prs}"
+            exit 0
+          fi
+          if ! git push origin --delete "${BRANCH}"; then
+            echo "::error::ブランチ ${BRANCH} を消せなかった。消してから実行し直す: git push origin --delete ${BRANCH}"
+            exit 1
+          fi
+          echo "::notice::PR を開けなかったため、押したブランチ ${BRANCH} を消した。原因を直してから実行し直す"
+
   merge:
     name: PRをマージする
     if: inputs.auto_merge
@@ -315,6 +348,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -326,6 +361,7 @@ jobs:
           fi
 
       - name: PRをマージする
+        id: merge
         # マージコミットで取り込む。
         # main のルール（必須のチェックや承認）で止められた場合はここで失敗する。
         # その場合は人が PR をマージすれば、release-publish.yml が pull_request(closed) で動いて公開まで進む
@@ -337,6 +373,10 @@ jobs:
             echo "::error::PR をマージできなかった。main のルール（必須のチェックや承認）で止められている。人が PR をマージすれば、「リリースを公開する」が動いて公開まで進む: ${PR_URL}"
             exit 1
           fi
+          # タグはこのマージコミットに打つ。公開のジョブが始まるまでに main へ別の PR が入っても、ずれないようにする。
+          # 取れなければ空のまま渡し、公開の側が main の先端を使う
+          sha="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json mergeCommit --jq '.mergeCommit.oid // empty' || true)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
   publish:
     name: タグとGitHub Releaseを作る
@@ -350,3 +390,4 @@ jobs:
       pull-requests: write
     with:
       version: ${{ needs.prepare.outputs.version }}
+      sha: ${{ needs.merge.outputs.sha }}
