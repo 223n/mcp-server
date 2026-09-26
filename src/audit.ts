@@ -43,8 +43,9 @@ const SAFE_KEYS = new Set([
 // パスの配列はそのまま残す。何をローカルのモデルに渡したかは、監査でいちばん知りたいこと
 const PATH_KEYS = new Set(["files", "paths"]);
 
-// 差分の出どころ（ollama_review_code の git_diff、pull_request）。中の鍵も SAFE_KEYS で絞って残す
-const SOURCE_KEYS = new Set(["git_diff", "pull_request"]);
+// 差分とログの出どころ（ollama_review_code の git_diff、pull_request、ollama_explain_error の check_log）。
+// 中の鍵も SAFE_KEYS で絞って残す
+const SOURCE_KEYS = new Set(["git_diff", "pull_request", "check_log"]);
 
 const MAX_PATHS = 20;
 

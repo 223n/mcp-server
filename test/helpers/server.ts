@@ -163,6 +163,7 @@ export function cleanEnv() {
     "GIT_USER_EMAIL",
     "GITHUB_MCP_TOKEN",
     "GITHUB_ALLOW_WRITE",
+    "GITHUB_API_TIMEOUT",
     "MCP_AUTH_TOKEN",
     "CF_ACCESS_TEAM_DOMAIN",
     "CF_ACCESS_AUD",
