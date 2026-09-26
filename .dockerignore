@@ -1,7 +1,7 @@
 node_modules
 npm-debug.log
+*.log
 .git
-.env
 .github
 .markdownlint-cli2.jsonc
 .textlintignore
@@ -9,4 +9,15 @@ npm-debug.log
 claude
 docs
 scripts
+test
 reset.ps1
+
+# 秘密のファイル。Dockerfile の COPY . . でイメージの層に入れないよう、.gitignore と同じものを外す
+.env
+.env.*
+.npmrc
+
+# エディタと OS のファイル
+.vscode
+.idea
+.DS_Store

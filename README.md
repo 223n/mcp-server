@@ -111,9 +111,10 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `DEFAULT_MODEL`                          | `nucbox-fast:latest`                                           | `ollama_chat`の既定のモデルです                                                                                                                    |
 | `DEEP_MODEL`                             | `qwen2.5-coder:14b`                                            | コードの確認とエラーの解析の既定のモデルです                                                                                                       |
 | `OLLAMA_TIMEOUT`                         | `300000`                                                       | Ollamaから何も届かない状態の上限（ミリ秒）です。キューの待ち、モデルの読み込み、プロンプトの評価も含みます                                         |
-| `OLLAMA_MAX_DURATION`                    | `3000000`                                                      | 1回の生成全体の上限（ミリ秒）です。HTTPの`requestTimeout`もこの値+60秒に合わせます                                                                 |
+| `OLLAMA_MAX_DURATION`                    | `3000000`                                                      | 1回の生成全体の上限（ミリ秒）です                                                                                                                  |
 | `OLLAMA_MAX_CONCURRENCY`                 | `2`                                                            | 同時に走らせる生成の数です。OllamaはGPUを1つずつ使うため、並べても全体は速くなりません                                                             |
 | `OLLAMA_MAX_QUEUE`                       | `8`                                                            | 待ち行列の長さの上限です。ここも一杯なら、待たせずにその場で断ります                                                                              |
+| `HTTP_REQUEST_TIMEOUT`                   | `60000`                                                        | HTTPの要求を受け取り終えるまでの上限（ミリ秒）です。応答を返している時間（生成の時間）には効きません                                              |
 | `ALLOWED_HOSTS`                          | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です                                                                                                               |
 | `HTTP_ALLOW_FILES`                       | `false`                                                        | HTTPでもファイルの読み込みを許すかどうかです。認証（`MCP_AUTH_TOKEN`か`CF_ACCESS_*`）がないときは無視します                                        |
 | `MCP_AUTH_TOKEN`                         | なし                                                           | 設定すると、HTTPに`Authorization: Bearer <値>`を求めます                                                                                           |
@@ -131,8 +132,14 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
-- Nodeの`requestTimeout`は既定で300秒です。これを上げないと、`OLLAMA_MAX_DURATION`をいくら大きくしてもHTTPは300秒で切ります。サーバーは`OLLAMA_MAX_DURATION`+60秒に合わせ、起動時に`[http] request timeout`として出します
-  - 無通信の上限（`OLLAMA_TIMEOUT`）は300秒のままです。全体の上限だけを延ばし、Ollamaが固まったときは早く気付けるようにしています
+- 無通信の上限（`OLLAMA_TIMEOUT`）は300秒のままです。全体の上限だけを延ばし、Ollamaが固まったときは早く気付けるようにしています
+- `ollama_health`と`ollama_list_models`の問い合わせは、`OLLAMA_TIMEOUT`と15秒の短いほうで打ち切ります。Ollamaが固まったときに、状態の確認そのものが300秒待たないようにするためです
+- HTTPの`requestTimeout`（`HTTP_REQUEST_TIMEOUT`）は、要求を受け取り終えるまでの上限です。応答を返している時間には効かないため、長い生成のために上げる必要はありません。起動時に`[http] request timeout`として出します
+  - 以前は`OLLAMA_MAX_DURATION`+60秒に合わせていましたが、Node 22と26で、`requestTimeout`より長い応答が切れないことを確かめたうえで切り離しました。長くしておくと、本文をゆっくり送り続ける相手に、その間ずっと接続をつかまれます
+- 認証は、本文を読む前に確かめます。認証のない要求は、本文を解析せずに401を返します
+- 失敗した要求（状態コードが400以上）が同じ接続元から1分に60回を超えると、その接続元からの要求を1分ほど429で断ります。偽のトークンの連打で、重い認証の処理を回させないためです
+  - 成功した要求は数えません。認証を通った普段の利用は妨げません
+  - 接続元は相手のIPで見分け、`X-Forwarded-For`は信じません。Cloudflare Tunnelを通る要求は、どれもcloudflaredから届くため、同じ枠を分け合います
   - 3000秒まで使えるのはstdioと、同じPCから直にHTTPを叩くときです。claude.aiのコネクタは約240秒、Cloudflareは無通信が約100秒で打ち切ります
 - `MCP_AUTH_TOKEN`と`CF_ACCESS_*`の両方を設定したときは、どちらかを満たせば通します
 - どちらも設定しないと、このPCのほかのコンテナーからも`host.docker.internal:3000`を通してHTTPを呼べます
@@ -402,9 +409,14 @@ npm test
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
+- すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること
+- HTTPの`requestTimeout`より長い生成が、途中で切れずに最後まで返ること
+- Ollamaが固まったとき、状態の確認が短い上限で打ち切られ、効いた上限の名前を知らせること
+- 認証を設定したHTTPで、認証のない要求には本文を読み終える前に401を返すこと
+- 失敗した要求が1分に60回を超えると429で断り、成功した要求は数えないこと
 - `list_files`のグロブが、`*`を並べた意地の悪いパターンでもすぐ終わること（ReDoSを防ぐ）
 - サーバーが読む環境変数を、`docker-compose.yml`がすべてコンテナーに渡していること
 - 環境変数の不正な値で、起動時に止まること

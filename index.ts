@@ -2,6 +2,8 @@ import type { ErrorRequestHandler, NextFunction, Request, Response } from "expre
 
 import express from "express";
 
+import rateLimit from "express-rate-limit";
+
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -88,10 +90,38 @@ const app = createMcpExpressApp({
   jsonLimit: "4mb",
 });
 
+// 失敗した要求（状態コードが 400 以上）だけを数え、1 分に 60 回を超えた接続元をしばらく断る。
+// 認証（JWT の署名の確かめと鍵の取得）は重いため、その手前に置いて、偽のトークンの連打を止める。
+// 成功した要求は数えないので、認証を通った普段の利用は妨げない（長い生成は終わるまで一時的に数に入るため、
+// 同時に走る生成の数より十分に大きくしておく）。
+// 接続元は相手の IP で見分ける。X-Forwarded-For は同じ PC のほかのプロセスが偽れるため信じない。
+// Cloudflare Tunnel を通る要求は、どれも cloudflared の IP から届くため、同じ枠を分け合う
+const failureLimiter = rateLimit({
+  windowMs: 60 * 1000,
+
+  limit: 60,
+
+  skipSuccessfulRequests: true,
+
+  standardHeaders: "draft-7",
+
+  legacyHeaders: false,
+
+  // cloudflared が付ける X-Forwarded-For を、上のとおり意図して使わない。起動のたびの警告を止める
+  validate: { xForwardedForHeader: false },
+
+  handler: (_req, res) => rpcError(res, 429, -32000, "Too many failed requests from this client. Try again in a minute."),
+});
+
+root.use("/mcp", failureLimiter);
+
 const auth = createAuthMiddleware();
 
 if (auth) {
-  app.use("/mcp", auth);
+  // createMcpExpressApp は本文の解析（express.json、上限 4 MB）を先に積んでいる。
+  // app に足すとその後ろになり、認証の無い相手の本文まで読み終えてから 401 を返すことになる。
+  // root に足して、本文を読む前に断る。Host と Origin の確かめは、認証を通ったものに対して行う
+  root.use("/mcp", auth);
 } else {
   console.warn(
     "[auth] HTTP /mcp has no authentication. Set MCP_AUTH_TOKEN or CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD to require it.",
@@ -203,14 +233,14 @@ const httpServer = root.listen(config.port, config.host, () => {
   console.log(`ollama-mcp listening on http://${config.host}:${config.port}/mcp`);
 });
 
-// Node の既定（300 秒）のままだと、長い生成が 408 で切られる。
+// 要求を受け取り終えるまでの上限。応答を返している時間（生成の時間）には効かない。
 // headersTimeout は requestTimeout より短くしておく必要がある
 httpServer.requestTimeout = config.httpRequestTimeout;
 
 httpServer.headersTimeout = Math.min(60000, config.httpRequestTimeout - 1000);
 
 console.log(
-  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (OLLAMA_MAX_DURATION + 60 s)`,
+  `[http] request timeout: ${Math.round(config.httpRequestTimeout / 1000)} s (HTTP_REQUEST_TIMEOUT, receiving the request only)`,
 );
 
 let stopping = false;

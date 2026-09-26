@@ -37,3 +37,24 @@ test("サーバーが読む環境変数は、docker-compose.yml からコンテ�
 
   assert.deepEqual(missing, []);
 });
+
+// Dockerfile は COPY . . で文脈をまるごと写す。.gitignore で外している秘密のファイルが
+// .dockerignore に無いと、手元にあるだけでイメージの層に入る
+test(".gitignore で外している秘密のファイルは、Docker のビルドの文脈からも外している", () => {
+  const lines = (file: string) =>
+    readFileSync(path.join(ROOT, file), "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"));
+
+  const dockerignore = new Set(lines(".dockerignore"));
+
+  for (const pattern of [".env", ".env.*", ".npmrc"]) {
+    assert.ok(lines(".gitignore").includes(pattern), `.gitignore should list ${pattern}`);
+
+    assert.ok(dockerignore.has(pattern), `.dockerignore should list ${pattern}`);
+  }
+
+  // 試験はイメージの中では動かさないため、写さない
+  assert.ok(dockerignore.has("test"));
+});

@@ -33,6 +33,11 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
       return;
     }
 
+    // 枠は、ここで待っていた呼び出しに渡す。active を先に増やしておかないと、
+    // 待っていた呼び出しが動き出すまでの間（マイクロタスクの分）に来た新しい呼び出しが、
+    // 空いたように見える枠を横取りし、上限を超えて走る
+    active += 1;
+
     waiter.start();
   }
 
@@ -46,6 +51,12 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
      * 待ち行列も一杯なら、待たせずにその場で断る。
      */
     async run<T>(fn: () => Promise<T> | T, { signal, onWait }: RunOptions = {}): Promise<T> {
+      // すでに中断された呼び出しは並ばせない。abort のイベントはもう来ないため、並ぶと
+      // 生きている呼び出しの席をふさいだまま残り、順番が来てから中断済みの fn を動かしてしまう
+      if (signal?.aborted) {
+        throw new Error("Cancelled by the MCP client before it was queued");
+      }
+
       if (active >= max) {
         if (queue.length >= maxQueue) {
           throw new Error(
@@ -78,9 +89,11 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
 
           queue.push(waiter);
         });
-      }
 
-      active += 1;
+        // 枠は next() が active を増やしてから渡している
+      } else {
+        active += 1;
+      }
 
       try {
         return await fn();
