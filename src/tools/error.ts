@@ -6,7 +6,7 @@ import { config } from "../config/config.ts";
 
 import { readCheckLogs } from "./github.ts";
 
-import { runChat } from "./ollama.ts";
+import { runChatOrJob } from "./ollama.ts";
 
 /** ollama_explain_error の引数。src/tools/index.ts の inputSchema と対で保つこと */
 export type ExplainErrorArgs = {
@@ -18,6 +18,7 @@ export type ExplainErrorArgs = {
   line_numbers?: boolean;
   save_output?: boolean;
   output_name?: string;
+  background?: boolean;
   model?: string;
   max_tokens?: number;
 };
@@ -52,7 +53,9 @@ ${args.error ?? "（下の CI のログを見てください）"}
 ${args.context ? `\n補足情報:\n\n${args.context}` : ""}
 `;
 
-  return await runChat(
+  return await runChatOrJob(
+    "ollama_explain_error",
+    args,
     {
       model: args.model ?? config.deepModel,
 

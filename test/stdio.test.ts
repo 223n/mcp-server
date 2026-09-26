@@ -61,6 +61,11 @@ describe("stdio", () => {
 
         assert.equal(tools.length, 7);
 
+        // ジョブは HTTP でだけ受け付ける。stdio はクライアントと一緒にプロセスが止まり、ジョブが消えるため
+        assert.ok(!tools.some((t) => t.name === "ollama_job"));
+
+        assert.equal(tools.find((t) => t.name === "ollama_chat")?.inputSchema.properties?.background, undefined);
+
         const listing = await client.callTool({
           name: "list_files",
 

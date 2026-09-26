@@ -8,6 +8,8 @@ import type { GitCloneArgs, GitReadArgs, GitWriteArgs } from "./git.ts";
 
 import type { GitHubReadArgs, GitHubWriteArgs } from "./github.ts";
 
+import type { JobArgs } from "./jobs.ts";
+
 import type { ChatToolArgs } from "./ollama.ts";
 
 import type { ReviewCodeArgs } from "./review.ts";
@@ -25,6 +27,8 @@ import { cloneLabel, cloneReady, gitClone, gitRead, gitWrite, ownersLabel } from
 import { githubRead, githubReady, githubWrite } from "./github.ts";
 
 import { createHealthTool } from "./health.ts";
+
+import { ollamaJob } from "./jobs.ts";
 
 import { ollamaChatTool, ollamaListModels } from "./ollama.ts";
 
@@ -286,6 +290,21 @@ export function buildTools({
       }
     : {};
 
+  // 長い生成をジョブにする。HTTP で保存が使えるときだけ出す。
+  // stdio はクライアントが終わるとプロセスごと止まり、ジョブも消えるため出さない
+  const jobsEnabled = !local && writesEnabled;
+
+  const backgroundArg = jobsEnabled
+    ? {
+        background: z
+          .boolean()
+          .optional()
+          .describe(
+            "Run as a background job: the call returns a job id at once, the generation continues, and the answer is saved under the output directory. Use it when the generation may take longer than about 3 minutes (remote connectors give up after about 240 s). Then call `ollama_job` with the id until it is done.",
+          ),
+      }
+    : {};
+
   const filesHint = filesEnabled
     ? ` Prefer passing \`files\` (paths under ${fileRootsLabel()}) over pasting contents: it saves Claude tokens.`
     : "";
@@ -445,6 +464,8 @@ export function buildTools({
 
         ...saveArgs,
 
+        ...backgroundArg,
+
         temperature: z.number().min(0).max(2).optional().describe("Default 0.7."),
 
         max_tokens: maxTokensArg(4096),
@@ -476,6 +497,8 @@ export function buildTools({
         ...diffArgs,
 
         ...saveArgs,
+
+        ...backgroundArg,
 
         structured: z
           .boolean()
@@ -548,6 +571,8 @@ export function buildTools({
 
         ...saveArgs,
 
+        ...backgroundArg,
+
         model: modelArg(config.deepModel),
 
         max_tokens: maxTokensArg(1536),
@@ -589,6 +614,28 @@ export function buildTools({
     },
 
     ...fileTools,
+
+    ...(jobsEnabled
+      ? [
+          {
+            name: "ollama_job",
+
+            title: "Ollama: check a background job",
+
+            description:
+              "Check a background job started with `background: true`: queued, running (with elapsed time), done (with the saved file's path, the first and last part of the answer, and the usual stats) or failed. " +
+              "Without `id`, list your jobs. Finished jobs are kept for 1 hour; the saved file stays and can be read with `read_file`. Read-only.",
+
+            inputSchema: z.strictObject({
+              id: z.string().uuid().optional().describe("The job id returned when the job was accepted. Omit to list your jobs."),
+            }),
+
+            annotations: { ...READ_ONLY, idempotentHint: true },
+
+            handler: (args) => ollamaJob(args as JobArgs),
+          } satisfies ToolDefinition,
+        ]
+      : []),
 
     ...buildGitTools({ local }),
   ];

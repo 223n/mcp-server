@@ -16,6 +16,8 @@ import { cloneLabel, cloneReady, ownersLabel } from "./git.ts";
 
 import { githubReady } from "./github.ts";
 
+import { jobStats } from "./jobs.ts";
+
 import { inputBudget, limiterStats } from "./ollama.ts";
 
 import { outputLabel, outputReady } from "./output.ts";
@@ -77,6 +79,14 @@ export function createHealthTool({ allowFiles, allowWrites = false, local = fals
 
     const output = allowWrites && outputReady() ? `enabled (${outputLabel()})` : "disabled";
 
+    // ジョブは HTTP で保存が使えるときだけ受け付ける（src/tools/index.ts の jobsEnabled と同じ条件）
+    const jobs = jobStats();
+
+    const background =
+      !local && allowWrites && outputReady()
+        ? `enabled (${jobs.running} running, ${jobs.queued} queued, ${jobs.finished} finished and kept for 1 h)`
+        : "disabled";
+
     const clone = cloneReady()
       ? `enabled (${cloneLabel()}; owners: ${ownersLabel() || "none"})`
       : "disabled";
@@ -101,6 +111,7 @@ export function createHealthTool({ allowFiles, allowWrites = false, local = fals
       `delegated since this process started, by identity: ${describeTotals(usageTotals().identities)}`,
       `file access: ${files}`,
       `output saving: ${output}`,
+      `background jobs: ${background}`,
       `git clone: ${clone}`,
       `git writes: ${gitWrites}`,
       `github api: ${github}`,

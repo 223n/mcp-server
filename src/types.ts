@@ -209,6 +209,12 @@ export type ChatRequest = {
 
   /** 生成のあとに出力を読み替える。渡したもの（shown）と照らして確かめるのに使う */
   postProcess?: (content: string, shown: ShownPart[]) => ChatPostProcessed;
+
+  /**
+   * 進み具合の知らせ。クライアントへの進捗の通知とは別に受ける（バックグラウンドのジョブが使う）。
+   * 枠を得て生成を始めたときにも、queued の無い知らせを 1 度送る
+   */
+  onProgress?: ProgressReporter;
 };
 
 /** 呼び出し側が本文ごと渡してくるファイル。サーバーは読みに行きません */
