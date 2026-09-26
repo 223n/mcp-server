@@ -43,12 +43,37 @@ type GitHubIssue = {
 
 type GitHubComment = { user?: GitHubUser; created_at?: string; body?: string; html_url?: string };
 
-type GitHubCheckRuns = { check_runs?: { name?: string; status?: string; conclusion?: string }[] };
+type GitHubCheckRun = {
+  id?: number;
+  name?: string;
+  status?: string;
+  conclusion?: string;
+  details_url?: string;
+  output?: { annotations_count?: number };
+};
+
+type GitHubCheckRuns = { check_runs?: GitHubCheckRun[] };
+
+type GitHubAnnotation = {
+  path?: string;
+  start_line?: number;
+  annotation_level?: string;
+  title?: string;
+  message?: string;
+};
 
 /** github_read の引数。src/tools/index.ts の inputSchema と対で保つこと */
 export type GitHubReadArgs = {
   repo: string;
-  op: "pr_list" | "pr_view" | "pr_diff" | "pr_comments" | "pr_checks" | "issue_list" | "issue_view";
+  op:
+    | "pr_list"
+    | "pr_view"
+    | "pr_diff"
+    | "pr_comments"
+    | "pr_checks"
+    | "check_log"
+    | "issue_list"
+    | "issue_view";
   number?: number;
   state?: "open" | "closed" | "all";
   limit?: number;
@@ -110,6 +135,41 @@ function trim(text: unknown, limit = MAX_BODY_CHARS): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}\n... [truncated]`;
 }
 
+function apiHeaders(accept?: string, withBody = false): Record<string, string> {
+  if (!config.githubToken) {
+    throw new Error("GITHUB_MCP_TOKEN is not set on this server");
+  }
+
+  return {
+    Accept: accept ?? "application/vnd.github+json",
+
+    Authorization: `Bearer ${config.githubToken}`,
+
+    "X-GitHub-Api-Version": "2022-11-28",
+
+    "User-Agent": "ollama-mcp",
+
+    ...(withBody ? { "Content-Type": "application/json" } : {}),
+  };
+}
+
+// クライアントの中断に、GITHUB_API_TIMEOUT の打ち切りを重ねる。
+// クライアントの中断だけに頼ると、GitHub が応答を返さないとき、クライアントが諦めるまで待ち続ける
+function withTimeout(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(config.githubApiTimeout);
+
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+// 打ち切りの理由が GITHUB_API_TIMEOUT なら、そうと分かる文に直す。クライアントの中断はそのまま返す
+function explainAbort(error: unknown, label: string, signal: AbortSignal, client?: AbortSignal): unknown {
+  if (signal.aborted && !client?.aborted) {
+    return new Error(`${label} timed out after ${Math.round(config.githubApiTimeout / 1000)} s (GITHUB_API_TIMEOUT)`);
+  }
+
+  return error;
+}
+
 /**
  * GitHub の API を呼ぶ。
  *
@@ -120,38 +180,263 @@ async function api<T>(
   path: string,
   { method = "GET", body, accept, signal }: ApiOptions = {},
 ): Promise<T> {
-  if (!config.githubToken) {
-    throw new Error("GITHUB_MCP_TOKEN is not set on this server");
+  const headers = apiHeaders(accept, Boolean(body));
+
+  const bounded = withTimeout(signal);
+
+  try {
+    const response = await fetch(`${API}${path}`, {
+      method,
+
+      headers,
+
+      body: body ? JSON.stringify(body) : undefined,
+
+      signal: bounded,
+    });
+
+    // 本文を読み終えるまでを打ち切りの対象にする。見出しだけ返して本文を止める相手もいる
+    const text = await response.text();
+
+    if (!response.ok) {
+      // 本文にトークンは載らないが、長いHTMLが返ることがあるので切り詰める
+      throw new Error(`GitHub API ${method} ${path} failed (${response.status}): ${trim(text, 500)}`);
+    }
+
+    return (accept ? text : JSON.parse(text || "null")) as T;
+  } catch (error) {
+    throw explainAbort(error, `GitHub API ${method} ${path}`, bounded, signal);
+  }
+}
+
+// 失敗として扱うチェックの結論
+const FAILED_CONCLUSIONS = new Set(["failure", "timed_out"]);
+
+// 1 回に読む失敗したチェックの数、ログの末尾の行数と文字数。
+// 5 件 x 8000 文字で、応答の上限（MAX_BODY_CHARS）に収まる
+const MAX_FAILED_RUNS = 5;
+
+const LOG_TAIL_LINES = 200;
+
+const LOG_TAIL_CHARS = 8000;
+
+// ログは数十 MB になることがある。全体を持たずに、末尾のこの大きさだけを残して読む
+const LOG_READ_BYTES = 256 * 1024;
+
+// 本文を最後まで読み、末尾の maxBytes だけを返す
+async function readTail(response: Response, maxBytes: number): Promise<{ text: string; cut: boolean }> {
+  const chunks: Uint8Array[] = [];
+
+  let total = 0;
+
+  let cut = false;
+
+  for await (const chunk of response.body ?? []) {
+    const bytes = chunk as Uint8Array;
+
+    chunks.push(bytes);
+
+    total += bytes.length;
+
+    while (chunks.length > 1 && total - (chunks[0]?.length ?? 0) >= maxBytes) {
+      total -= chunks.shift()?.length ?? 0;
+
+      cut = true;
+    }
   }
 
-  const response = await fetch(`${API}${path}`, {
-    method,
+  const joined = Buffer.concat(chunks);
 
-    headers: {
-      Accept: accept ?? "application/vnd.github+json",
+  const start = Math.max(0, joined.length - maxBytes);
 
-      Authorization: `Bearer ${config.githubToken}`,
+  return { text: joined.subarray(start).toString("utf8"), cut: cut || start > 0 };
+}
 
-      "X-GitHub-Api-Version": "2022-11-28",
+// Actions のログの各行の先頭の時刻と、色の制御文字を落とす。モデルにも Claude にも要らない
+function cleanLogLine(line: string): string {
+  return line
+    .replace(/\r$/, "")
+    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, "")
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+}
 
-      "User-Agent": "ollama-mcp",
+/**
+ * Actions のジョブのログを読み、末尾だけを返す。
+ *
+ * ログの API は保存先へのリダイレクト（302）を返す。リダイレクトは自分でたどり、
+ * 保存先には Authorization を送らない。Fetch の仕様では別のオリジンへのリダイレクトで外れるが、実装に頼らない
+ */
+async function fetchLogTail(owner: string, repo: string, jobId: string, signal?: AbortSignal): Promise<string> {
+  const path = `/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`;
 
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
+  const bounded = withTimeout(signal);
 
-    body: body ? JSON.stringify(body) : undefined,
+  try {
+    let response = await fetch(`${API}${path}`, { headers: apiHeaders(), redirect: "manual", signal: bounded });
 
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location") ?? "";
+
+      if (!/^https:\/\//i.test(location)) {
+        throw new Error(`GitHub returned a log location that is not https: ${trim(location, 200)}`);
+      }
+
+      await response.body?.cancel();
+
+      response = await fetch(location, { headers: { "User-Agent": "ollama-mcp" }, signal: bounded });
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+
+      const hint =
+        response.status === 403 || response.status === 404
+          ? " The token needs \"Actions: Read\", and logs expire after the repository's retention period."
+          : "";
+
+      throw new Error(`GitHub API GET ${path} failed (${response.status}): ${trim(text, 300)}${hint}`);
+    }
+
+    const { text, cut } = await readTail(response, LOG_READ_BYTES);
+
+    const lines = text.split("\n");
+
+    // 切り詰めたときの先頭の行は途中から始まるため落とす
+    if (cut) {
+      lines.shift();
+    }
+
+    while (lines.length > 0 && lines.at(-1)?.trim() === "") {
+      lines.pop();
+    }
+
+    const tail = lines.slice(-LOG_TAIL_LINES).map(cleanLogLine).join("\n");
+
+    const kept = tail.length <= LOG_TAIL_CHARS ? tail : tail.slice(-LOG_TAIL_CHARS);
+
+    const omitted = cut || lines.length > LOG_TAIL_LINES || kept.length < tail.length;
+
+    return `${omitted ? `... [earlier lines omitted; last ${LOG_TAIL_LINES} lines at most]\n` : ""}${kept}`;
+  } catch (error) {
+    throw explainAbort(error, `GitHub API GET ${path}`, bounded, signal);
+  }
+}
+
+// Actions のジョブなら、そのジョブの ID を返す。details_url が同じリポジトリの Actions を指すときだけ
+function actionsJobId(run: GitHubCheckRun, owner: string, repo: string): string | undefined {
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/.exec(
+    run.details_url ?? "",
+  );
+
+  if (!match || match[1]?.toLowerCase() !== owner.toLowerCase() || match[2]?.toLowerCase() !== repo.toLowerCase()) {
+    return undefined;
+  }
+
+  return match[3];
+}
+
+// 1 件の失敗したチェックの、注釈とログの末尾
+async function describeFailedRun(
+  owner: string,
+  repo: string,
+  run: GitHubCheckRun,
+  signal?: AbortSignal,
+): Promise<string> {
+  const parts = [`=== ${run.name ?? "(unnamed check)"} (${run.conclusion})`];
+
+  if (run.id && (run.output?.annotations_count ?? 0) > 0) {
+    try {
+      const annotations = await api<GitHubAnnotation[]>(
+        `/repos/${owner}/${repo}/check-runs/${run.id}/annotations?per_page=50`,
+        { signal },
+      );
+
+      parts.push(
+        "--- annotations",
+        ...annotations.map((a) =>
+          line([
+            `${a.path ?? "?"}:${a.start_line ?? "?"}`,
+            `[${a.annotation_level ?? "?"}]`,
+            a.title,
+            trim(a.message ?? "", 500),
+          ]),
+        ),
+      );
+    } catch (error) {
+      parts.push(`(annotations not available: ${error instanceof Error ? error.message : error})`);
+    }
+  }
+
+  const jobId = actionsJobId(run, owner, repo);
+
+  if (!jobId) {
+    parts.push(`(not a GitHub Actions job, so there is no log to read${run.details_url ? `: ${run.details_url}` : ""})`);
+
+    return parts.join("\n");
+  }
+
+  try {
+    parts.push(`--- log (last ${LOG_TAIL_LINES} lines)`, await fetchLogTail(owner, repo, jobId, signal));
+  } catch (error) {
+    signal?.throwIfAborted();
+
+    parts.push(`(log not available: ${error instanceof Error ? error.message : error})`);
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Pull Request の head の失敗したチェックについて、注釈とログの末尾を読む。
+ * github_read の check_log と、ollama_explain_error の check_log が使う
+ */
+async function fetchCheckLogs(owner: string, repo: string, pr: unknown, signal?: AbortSignal): Promise<string> {
+  const pull = await api<GitHubPull>(`/repos/${owner}/${repo}/pulls/${number(pr)}`, { signal });
+
+  const sha = pull.head?.sha;
+
+  if (!sha) {
+    throw new Error(`GitHub did not return a head commit for #${number(pr)}`);
+  }
+
+  const runs = await api<GitHubCheckRuns>(`/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100`, {
     signal,
   });
 
-  const text = await response.text();
+  const failed = (runs.check_runs ?? []).filter((run) => FAILED_CONCLUSIONS.has(run.conclusion ?? ""));
 
-  if (!response.ok) {
-    // 本文にトークンは載らないが、長いHTMLが返ることがあるので切り詰める
-    throw new Error(`GitHub API ${method} ${path} failed (${response.status}): ${trim(text, 500)}`);
+  if (failed.length === 0) {
+    return `No failed check runs on the head commit (${sha.slice(0, 7)}).`;
   }
 
-  return (accept ? text : JSON.parse(text || "null")) as T;
+  const sections: string[] = [];
+
+  for (const run of failed.slice(0, MAX_FAILED_RUNS)) {
+    sections.push(await describeFailedRun(owner, repo, run, signal));
+  }
+
+  if (failed.length > MAX_FAILED_RUNS) {
+    sections.push(`... and ${failed.length - MAX_FAILED_RUNS} more failed check(s): ${failed.slice(MAX_FAILED_RUNS).map((r) => r.name).join(", ")}`);
+  }
+
+  return trim(sections.join("\n\n"));
+}
+
+/** ollama_explain_error の check_log。src/tools/index.ts の inputSchema と対で保つこと */
+export type CheckLogSource = {
+  repo: string;
+  number: number;
+};
+
+/**
+ * 失敗したチェックの注釈とログの末尾を、ローカルのモデルへ渡すために読む。
+ * github_read の check_log と同じ経路（owner の許可リスト、番号の確かめ）を通す
+ */
+export async function readCheckLogs(source: CheckLogSource, signal?: AbortSignal): Promise<string> {
+  const { owner, repo } = splitRepo(source.repo);
+
+  return await fetchCheckLogs(owner, repo, source.number, signal);
 }
 
 const line = (parts: (string | number | undefined)[]): string =>
@@ -238,6 +523,10 @@ async function readGitHub(args: GitHubReadArgs, ctx?: ToolContext): Promise<stri
           .join("\n") || "No check runs on the head commit."
       );
     }
+
+    // 失敗したチェックの注釈とログの末尾。ログには、GitHub が伏せきれなかった秘密が混ざることがある
+    case "check_log":
+      return await fetchCheckLogs(owner, repo, args.number, signal);
 
     case "issue_list": {
       const items = await api<GitHubIssue[]>(

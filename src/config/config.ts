@@ -121,6 +121,8 @@ export const config = {
 
   githubAllowWrite: env.GITHUB_ALLOW_WRITE,
 
+  githubApiTimeout: env.GITHUB_API_TIMEOUT,
+
   // 書き出しは読み込みとは別の条件にする。HTTP_ALLOW_FILES=true だけでは書けない
   httpAllowWritesRequested: env.HTTP_ALLOW_WRITES,
 

@@ -85,11 +85,14 @@ test("レビューした差分の出どころは、中の鍵も絞って残す",
   const fields = auditFields({
     git_diff: { repo: "223n/mcp-server", ref: "main", staged: true, prompt: "secret" },
     pull_request: { repo: "223n/mcp-server", number: 7 },
+    check_log: { repo: "223n/mcp-server", number: 8, body: "secret" },
   });
 
   assert.deepEqual(fields.git_diff, { repo: "223n/mcp-server", ref: "main", staged: true });
 
   assert.deepEqual(fields.pull_request, { repo: "223n/mcp-server", number: 7 });
+
+  assert.deepEqual(fields.check_log, { repo: "223n/mcp-server", number: 8 });
 });
 
 test("パスが多いときは件数を添えて切る", () => {

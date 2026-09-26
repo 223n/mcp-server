@@ -32,6 +32,7 @@ model: sonnet
    - 差分の確認: `ollama_review_code`の`git_diff`（取得したリポジトリ）か`pull_request`を使います。差分を写して渡さないでください。指摘は「ファイル:行」の形で返ります
    - 指摘の場所を機械的に確かめたいときは、`ollama_review_code`に`structured: true`を付けます。渡していないファイルや範囲の外の行を指す指摘は、サーバーが落として数を書きます
    - エラーの解析: `ollama_explain_error`
+   - CIの失敗の解析: `ollama_explain_error`の`check_log`（`{"repo": "owner/repo", "number": 12}`）を使います。ログを写して渡さないでください
    - そのほか: `ollama_chat`（`profile`にphp、docker、git、code_reviewを指定できます）
    - 長い下書きや翻訳で`save_output`が使えるときは、それを使います。応答にはパスと抜粋だけが返るため、全文を読まずに済みます。中身は`read_file`で必要な範囲だけ読みます
 1. 返ってきた結果を必ず確かめます

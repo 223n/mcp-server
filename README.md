@@ -39,7 +39,7 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 | `git_clone`            | GitHubのリポジトリを`CLONE_ROOT`の配下に取得します。`owner/repo`だけを受け、URLは受けません。`CLONE_ROOT`を設定したときだけ出ます | -               |
 | `git_read`             | 取得したリポジトリの状態を読みます。`status`、`log`、`diff`、`show`、`branches`、`remotes`です | -               |
 | `git_write`            | ブランチの作成、staging、commit、pushです。`GIT_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
-| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
+| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。失敗したCIの注釈とログの末尾も読めます（`check_log`）。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
 | `github_write`         | Pull Requestの作成とコメントです。`GITHUB_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
 
 - ファイルを扱えるとき（stdioと、設定したHTTP）は、`files`引数にWindowsの絶対パスを渡すと、サーバーがファイルを読み込みます。Claudeはファイルの中身を引数として書き出さずに済むため、トークンを節約できます
@@ -53,6 +53,11 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
   - `pull_request`にはPull Requestを`{"repo": "owner/repo", "number": 12}`の形で渡します。`GITHUB_MCP_TOKEN`を設定したときだけ出ます
   - 差分の追加行と文脈の行には、新しいファイルでの行番号をサーバーが振ります。指摘は「ファイル:行」の形で返ります
   - 秘密のファイルは`git_read`の`diff`と`github_read`の`pr_diff`と同じ判定で外します。入力の予算に入らないファイルは丸ごと落とし、名前を応答とプロンプトの両方に書きます
+- CIの失敗は`check_log`で調べます
+  - `github_read`の`check_log`は、Pull Requestのheadで失敗したチェック（`failure`、`timed_out`）ごとに、注釈と、GitHub Actionsのジョブのログの末尾200行を返します。行頭の時刻と色の制御文字は落とします
+  - ログには、GitHubの伏せきれなかった秘密も混ざりえます。Claudeに読ませたくないときは、`ollama_explain_error`に`check_log: {"repo": "owner/repo", "number": 12}`を渡します。ログはローカルのモデルにだけ渡り、応答には原因の候補だけが返ります
+  - ログのAPIは保存先へのリダイレクトを返します。サーバーはリダイレクトを自分でたどり、保存先にはトークンを送りません
+  - GitHubのAPIの呼び出しは、`GITHUB_API_TIMEOUT`（既定30秒）で打ち切ります
 - `ollama_review_code`に`structured: true`を付けると、指摘をJSON（`file`、`line`、`severity`、`problem`、`fix`、`uncertain`）で受けます
   - Ollamaの`format`で出力の形を絞ります
   - 渡していないファイルや、渡した行の範囲の外を指す指摘をサーバーが落とし、落とした数と理由を応答に書きます。差分では、番号を振った`@@`の範囲だけを通します
@@ -146,6 +151,7 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
 | `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
 | `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
+| `GITHUB_API_TIMEOUT`                     | `30000`                                                        | GitHubのAPIの1回の呼び出し（本文を読み終えるまで）の上限です（ミリ秒）。CIのログを読むときも使います                                              |
 | `AUDIT_LOG_DIR`                          | `docker-compose.yml`で設定                                     | 監査ログを1日1ファイルで書き出す先（コンテナーの中の絶対パス）です。空なら標準エラーにだけ出します。`FILE_ROOTS`の中は拒みます                   |
 | `AUDIT_RETENTION_DAYS`                   | `30`                                                           | 監査ログのファイルを残す日数です                                                                                                                   |
 
@@ -262,7 +268,8 @@ SSHの鍵は要りません。
     | Contents: Read | `git_clone`です。pushもするならRead and write |
     | Pull requests: Read | `pr_list`、`pr_view`、`pr_diff`、`pr_comments`です。PRを作るならRead and write |
     | Issues: Read | `issue_list`、`issue_view`です。コメントするならRead and write |
-    | Checks: Read | `pr_checks`です |
+    | Checks: Read | `pr_checks`と`check_log`（注釈）です |
+    | Actions: Read | `check_log`（ログ）です。`ollama_explain_error`の`check_log`も使います |
 
 1. `.env`に`GITHUB_MCP_TOKEN=github_pat_...`と書き、`docker compose up -d`で作り直します
 1. `ollama_health`の`github api`が`enabled`になれば有効です
@@ -451,6 +458,7 @@ npm test
 - `git_read`の`diff`と`github_read`の`pr_diff`から、`files`が拒むのと同じ秘密のファイルが外れること（名前の変更、引用符で囲まれた名前を含む）
 - `ollama_review_code`の`git_diff`と`pull_request`で、差分がローカルのモデルへのプロンプトにだけ入り、秘密のファイルが入らないこと。振った行番号が新しいファイルの行番号と一致すること
 - `ollama_review_code`の`structured`で、渡していないファイルや範囲の外の行を指す指摘が落ち、付けたときだけ`format`と`structuredContent`が使われること
+- `check_log`が失敗したチェックの注釈とログの末尾だけを返し、ログの保存先にトークンを送らないこと。`ollama_explain_error`の`check_log`でログが応答に返らないこと。GitHubが応答を返さないとき`GITHUB_API_TIMEOUT`で打ち切ること
 - 取得したリポジトリの`.git/config`に許可していない鍵（`core.fsmonitor`、`core.hooksPath`、`diff.external`、`include.path`など）があれば、gitを動かさずに拒むこと
 - 許可リストを通り抜けても、フックと`core.fsmonitor`がコマンドの側の設定で止まること
 - `github_read`と`git_read`の`log`、`diff`、`show`の結果に第三者の文章だという断り書きが付き、`status`と空の差分には付かないこと
