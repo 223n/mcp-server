@@ -98,6 +98,9 @@ WindowsではPowerShell 7以上で`scripts/setup.ps1`を使います。
 実行のあと、手元は`feature/setup-repository`ブランチに残ります。
 開かれたPull Requestをマージしたら、`develop`に戻してから作業を始めます。
 
+書き換えるものが無ければ、ブランチとPull Requestは作りません。
+Pull Requestをマージする前に実行し直すと、名前の書き換えは飛ばし、ファイルを変えずに案内を出します。
+
 ### 必要な設定
 
 GitHubの画面で行う設定です。

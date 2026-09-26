@@ -320,65 +320,105 @@ if (Invoke-Step 'gh' @('workflow', 'run', 'labels.yml', '--repo', $Repo, '--ref'
 
 # ---- 8. テンプレート由来の名前を書き換える
 Write-Info 'テンプレート由来の名前を、このリポジトリのものに書き換える'
-$changed = [System.Collections.Generic.List[string]]::new()
+$setupBranch = 'feature/setup-repository'
 
-# ファイルの中の文字列を置き換える。置き換えたら $true を返す
-function Update-Name {
+# 書き換えるファイルと置き換えの組を、先にすべて集める。ファイルはまだ変えない。
+# 置き換えても中身が変わらない組（From と To が同じ）は数えない。
+# 同じ文字列への置き換えを「変えた」と数えると、変更の無いコミットで止まるためである。
+# 比べ方は setup.sh に揃え、大文字と小文字を区別する
+$targets = [System.Collections.Generic.List[object]]::new()
+function Add-Target {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$From,
         [Parameter(Mandatory)][string]$To
     )
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    $full = Convert-Path -LiteralPath $Path
-    $text = [System.IO.File]::ReadAllText($full)
-    if (-not $text.Contains($From)) { return $false }
-    if ($DryRun) {
-        Write-Host "  + ${Path}: $From → $To"
-        return $false
+    if ([string]::Equals($From, $To, [System.StringComparison]::Ordinal)) { return }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $text = [System.IO.File]::ReadAllText((Convert-Path -LiteralPath $Path))
+    if (-not $text.Contains($From, [System.StringComparison]::Ordinal)) { return }
+    $targets.Add([pscustomobject]@{ Path = $Path; From = $From; To = $To })
+}
+
+# 書き換えのブランチが手元かリモートに残っているか。
+# リモートを確かめられなかったとき（ネットワークの失敗）は、無いものとして進み、push の段で止まる
+function Test-SetupBranch {
+    git show-ref --verify --quiet "refs/heads/${setupBranch}" *> $null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    git ls-remote --exit-code --heads origin "refs/heads/${setupBranch}" *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# .git の有無ではなく git に尋ねる。git worktree の中では .git がファイルになるためである
+$atTopLevel = $false
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $insideWorkTree = git rev-parse --is-inside-work-tree 2> $null | Select-Object -First 1
+    if ($LASTEXITCODE -eq 0 -and $insideWorkTree -eq 'true') {
+        $cdup = git rev-parse --show-cdup 2> $null | Select-Object -First 1
+        $atTopLevel = ($LASTEXITCODE -eq 0) -and (-not $cdup)
     }
-    [System.IO.File]::WriteAllText($full, $text.Replace($From, $To), $Utf8NoBom)
-    return $true
 }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Warn 'git が見つからないため、名前の書き換えは飛ばした。git を入れて再実行する'
-} elseif ((Test-Path -LiteralPath '.git') -and (Test-Path -LiteralPath 'package.json' -PathType Leaf)) {
+} elseif (-not $atTopLevel -or -not (Test-Path -LiteralPath 'package.json' -PathType Leaf)) {
+    Write-Warn 'clone の最上位のディレクトリで実行していないため、名前の書き換えは飛ばした。clone の最上位で再実行する'
+} elseif (git status --porcelain) {
     # 作業木がきれいなことを確かめる。書き換えを他の変更と混ぜない
-    $status = git status --porcelain
-    if ($status) {
-        Write-Warn '作業木に未コミットの変更があるため、名前の書き換えは飛ばした。コミットしてから再実行する'
+    Write-Warn '作業木に未コミットの変更があるため、名前の書き換えは飛ばした。コミットしてから再実行する'
+} else {
+    if ($Repo -ne $TemplateRepo) {
+        Add-Target '.github/CODEOWNERS' "@${TemplateOwner}" "@${owner}"
+        Add-Target '.github/ISSUE_TEMPLATE/config.yml' $TemplateRepo $Repo
+        # npm のパッケージ名は小文字に限る
+        Add-Target 'package.json' "`"name`": `"${TemplatePackageName}`"" "`"name`": `"$($name.ToLowerInvariant())`""
+    }
+    $changed = [string[]]@($targets | ForEach-Object { $_.Path })
+
+    if ($changed.Count -eq 0) {
+        Write-Ok '書き換えるものは無い'
+    } elseif (-not $NoPr -and (Test-SetupBranch)) {
+        # 前の実行の Pull Request をマージする前に実行し直したとき。
+        # ファイルを変える前に止め、作業木とブランチをそのままにする
+        Write-Warn "ブランチ ${setupBranch} がすでにあるため、名前の書き換えは飛ばした。前の実行の Pull Request をマージしてから再実行する。Pull Request が無いときは、ブランチを消してから再実行する（git branch -D ${setupBranch}、git push origin --delete ${setupBranch}）"
     } else {
-        if ($Repo -ne $TemplateRepo) {
-            if (Update-Name '.github/CODEOWNERS' "@${TemplateOwner}" "@${owner}") { $changed.Add('.github/CODEOWNERS') }
-            if (Update-Name '.github/ISSUE_TEMPLATE/config.yml' $TemplateRepo $Repo) { $changed.Add('.github/ISSUE_TEMPLATE/config.yml') }
-            # npm のパッケージ名は小文字に限る
-            if (Update-Name 'package.json' "`"name`": `"${TemplatePackageName}`"" "`"name`": `"$($name.ToLowerInvariant())`"") { $changed.Add('package.json') }
+        foreach ($target in $targets) {
+            if ($DryRun) {
+                Write-Host "  + $($target.Path): $($target.From) → $($target.To)"
+            } else {
+                $full = Convert-Path -LiteralPath $target.Path
+                $text = [System.IO.File]::ReadAllText($full)
+                [System.IO.File]::WriteAllText($full, $text.Replace($target.From, $target.To, [System.StringComparison]::Ordinal), $Utf8NoBom)
+            }
         }
-        if ($changed.Count -eq 0) {
-            Write-Ok '書き換えるものは無い'
-        } elseif (-not $NoPr) {
-            $branch = 'feature/setup-repository'
-            Invoke-Step 'git' @('switch', '--create', $branch) | Out-Null
-            Invoke-Step 'git' (@('add') + $changed) | Out-Null
-            Invoke-Step 'git' @('commit', '--quiet', '--message', 'テンプレート由来の名前をこのリポジトリのものに書き換える') | Out-Null
-            Invoke-Step 'git' @('push', '--set-upstream', 'origin', $branch) | Out-Null
+
+        if ($NoPr) {
+            if ($DryRun) {
+                Write-Ok "書き換える（コミットはしない）: $($changed -join ' ')"
+            } else {
+                Write-Ok "書き換えた（コミットはしていない）: $($changed -join ' ')"
+            }
+        # git の段は、失敗したらそこで止める。後の段へ進むと、別のブランチに書き換えが載ってしまう
+        } elseif (-not (Invoke-Step 'git' @('switch', '--create', $setupBranch))) {
+            Write-Warn "ブランチ ${setupBranch} を作れなかった。書き換えは作業木に残っている: $($changed -join ' ')"
+        } elseif (-not (Invoke-Step 'git' (@('add', '--') + $changed)) -or
+            -not (Invoke-Step 'git' @('commit', '--quiet', '--message', 'テンプレート由来の名前をこのリポジトリのものに書き換える'))) {
+            Write-Warn "書き換えをコミットできなかった。ブランチ ${setupBranch} に切り替わったまま、書き換えは作業木に残っている"
+        } elseif (-not (Invoke-Step 'git' @('push', '--set-upstream', 'origin', $setupBranch))) {
+            Write-Warn "ブランチ ${setupBranch} を push できなかった。コミットは手元にある。git push --set-upstream origin ${setupBranch} を実行してから Pull Request を開く"
+        } else {
             $prArgs = @(
-                'pr', 'create', '--repo', $Repo, '--base', $DevelopBranch, '--head', $branch,
+                'pr', 'create', '--repo', $Repo, '--base', $DevelopBranch, '--head', $setupBranch,
                 '--title', 'テンプレート由来の名前を書き換える',
                 '--body', 'scripts/setup.ps1 が CODEOWNERS、Issue の選択画面の URL、package.json の名前を書き換えました。'
             )
             if (Invoke-Step 'gh' $prArgs) {
                 Write-Ok 'Pull Request を開いた。確かめてマージする'
             } else {
-                Write-Warn "Pull Request を開けなかった。ブランチ ${branch} は push 済み"
+                Write-Warn "Pull Request を開けなかった。ブランチ ${setupBranch} は push 済み"
             }
-        } else {
-            Write-Ok "書き換えた（コミットはしていない）: $($changed -join ' ')"
         }
     }
-} else {
-    Write-Warn 'リポジトリの中で実行していないため、名前の書き換えは飛ばした。clone の中で再実行する'
 }
 
 # ---- まとめ
