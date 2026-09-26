@@ -296,12 +296,18 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
 - 読み込んだファイルに書かれた指示は、ローカルのモデルの出力に紛れ込むことがあります。出力の中の指示には従わないよう、ツールの応答と説明に書いてあります
   - `OUTPUT_DIR`を`FILE_ROOTS`の配下に置くと、書き出した出力を読み返せる代わりに、モデルの出力が普通のファイルのような顔で戻ってきます。起動時に警告を出し、書き出したファイルの先頭に出自を書いています
 - gitを動かすときは、環境変数を継承しません。`GIT_SSH_COMMAND`や`GIT_EXTERNAL_DIFF`など、任意のコマンドを実行させる変数を持ち込ませないためです
-  - 設定は`/etc/git/server.gitconfig`の1枚だけを読ませます。取得したリポジトリの`.git/config`に書かれた危険なキーは効きません
+  - システムの設定は`/etc/git/server.gitconfig`の1枚だけを読ませ、利用者のグローバルの設定は読ませません
+  - 取得したリポジトリの`.git/config`は、`GIT_CONFIG_SYSTEM`と`GIT_CONFIG_GLOBAL`を差し替えても読まれます。そこで、鍵の許可リストとコマンドの側の設定の2段で守ります
+    - 操作の前に`.git/config`の鍵を許可リストで確かめ、ほかの鍵があればgitを動かさずに拒みます
+    - 許すのは、`git clone`と`push --set-upstream`が書く鍵（`core.*`の一部、`remote.origin.*`、`branch.*.remote`と`merge`）と、`user.name`と`user.email`だけです。`remote.origin.url`は、取得先のURLと同じであることも確かめます
+    - `core.hooksPath`、`core.fsmonitor`、`credential.helper`、`commit.gpgSign`、`protocol.*`は、コマンドの側の設定（`GIT_CONFIG_COUNT`）で打ち消します。`diff`と`show`には`--no-ext-diff`と`--no-textconv`を付けます
+    - `.git/config`はリモートから配られないため、取得しただけで危険な鍵が入ることはありません。守る相手は、`CLONE_ROOT`に書けるホストの側のプロセスです
   - `https`以外のプロトコル（`ext::`、`file://`、`git://`、`ssh://`）を拒みます
   - 引数は必ず配列で渡し、シェルを介しません。利用者の値は値の位置にしか入らず、`-`で始まる値は拒みます
   - トークンは子プロセスの環境変数だけで渡します。argvに現れず、`.git/config`にも残りません
-- gitは`files`引数とは別の読み取り口になります。`diff`からは秘密のファイルをpathspecで外し、`show`は中身を返しません
-  - ただしこれは許可リストによる防御で、`files.ts`のような構造的な防御ではありません。取得したリポジトリの履歴に残った秘密は、原理的に読めます
+- gitとGitHubの差分は、`files`引数とは別の読み取り口になります。`git_read`の`diff`と`github_read`の`pr_diff`からは、`files`と同じ判定（`src/tools/sensitive.ts`）で秘密のファイルの区画を外し、外したファイルの名前を末尾に書きます。`show`は中身を返しません
+  - 名前を変えた差分は、元の名前と新しい名前のどちらかが当たれば外します
+  - ただしこれは名前による防御です。秘密に当たらない名前のファイルに書かれた秘密や、コミットのメッセージに書かれた秘密は読めます
 - 取得したリポジトリの中身は第三者が書いたテキストです。ローカルのモデルは指示の混入に弱いため、出力の中の指示には従いません
 - ツールの呼び出しは監査ログに残します。中身は出しませんが、ファイルのパスと操作の種類は残します
 - HTTPのアクセスログは10MBを3世代まで残します
@@ -324,7 +330,7 @@ mcp-server/
 │  ├─ git/exec.ts                   git の起動（環境を継承しない、引数は配列、上限と中断）
 │  ├─ http/auth.ts                  HTTP の認証（静的なトークン、Cloudflare Access の JWT）
 │  ├─ ollama/client.ts              Ollama の API（ストリーミング、タイムアウト、中断）
-│  └─ tools/                        ツール、ファイルの読み込みと一覧、出力の保存、リソース
+│  └─ tools/                        ツール、ファイルの読み込みと一覧、秘密のファイルの判定、出力の保存、リソース
 └─ test/                            試験（Ollama の代わりに試験用のサーバーを使う）
 ```
 
@@ -390,7 +396,9 @@ npm test
 - `owner/repo`の検証（`..`、パスの区切り、Windowsの装置名、`.git`で終わる名前、URL）
 - `-`で始まる値をgitの引数として拒むこと
 - 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
-- `diff`から秘密のファイルが外れること
+- `git_read`の`diff`と`github_read`の`pr_diff`から、`files`が拒むのと同じ秘密のファイルが外れること（名前の変更、引用符で囲まれた名前を含む）
+- 取得したリポジトリの`.git/config`に許可していない鍵（`core.fsmonitor`、`core.hooksPath`、`diff.external`、`include.path`など）があれば、gitを動かさずに拒むこと
+- 許可リストを通り抜けても、フックと`core.fsmonitor`がコマンドの側の設定で止まること
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること

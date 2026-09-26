@@ -8,6 +8,9 @@ const MAX_OUTPUT_CHARS = 60000;
 /** git の子プロセスに足す環境変数 */
 export type GitEnv = Record<string, string>;
 
+/** コマンドの側で渡す git の設定（鍵と値） */
+export type GitConfigEntry = [key: string, value: string];
+
 /** runGit の結果。code は、シグナルで終わったときだけ null になる */
 export type GitResult = {
   code: number | null;
@@ -19,9 +22,56 @@ export type GitResult = {
 export type GitOptions = {
   cwd?: string;
   env?: GitEnv;
+
+  /** コマンドの側で足す設定。HARDENED_CONFIG の後ろに並べる */
+  config?: GitConfigEntry[];
+
   signal?: AbortSignal;
   onProgress?: (info: { elapsedMs: number }) => void;
 };
+
+/**
+ * どの git の呼び出しにも、コマンドの側の設定として渡すもの。
+ *
+ * GIT_CONFIG_SYSTEM と GIT_CONFIG_GLOBAL が差し替えるのはシステムとグローバルの設定だけで、
+ * 取得したリポジトリの .git/config（local）はそのまま読まれます。
+ * コマンドの側の設定（GIT_CONFIG_COUNT）は local より後に読まれて勝つため、ここで打ち消します。
+ *
+ * - core.hooksPath、core.fsmonitor: status、diff、commit、push のたびにコマンドを実行させる
+ * - credential.helper: 空にすると、それまでに読んだ一覧を捨てる
+ * - commit.gpgSign: gpg.program のコマンドを実行させる
+ * - protocol.*: システムの設定の protocol.allow より、local の protocol.<名前>.allow が優先される
+ *
+ * diff.external と、名前を列挙できない鍵（filter.<名前>.clean など）はここでは打ち消せません。
+ * 前者は --no-ext-diff で止め、両方とも git.ts が .git/config の鍵を許可リストで確かめて止めます。
+ */
+const HARDENED_CONFIG: GitConfigEntry[] = [
+  ["core.hooksPath", "/dev/null"],
+  ["core.fsmonitor", "false"],
+  ["credential.helper", ""],
+  ["commit.gpgSign", "false"],
+  ["protocol.allow", "never"],
+  ["protocol.https.allow", "always"],
+  ["protocol.http.allow", "never"],
+  ["protocol.ssh.allow", "never"],
+  ["protocol.git.allow", "never"],
+  ["protocol.file.allow", "never"],
+  ["protocol.ext.allow", "never"],
+];
+
+// 設定を GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n の形にする。
+// -c key=value を argv に置く方法と違い、ps から見えず、値が設定の構文として読まれることもない
+function configEnv(entries: GitConfigEntry[]): GitEnv {
+  const env: GitEnv = { GIT_CONFIG_COUNT: String(entries.length) };
+
+  for (const [index, [key, value]] of entries.entries()) {
+    env[`GIT_CONFIG_KEY_${index}`] = key;
+
+    env[`GIT_CONFIG_VALUE_${index}`] = value;
+  }
+
+  return env;
+}
 
 /**
  * git の子プロセスに渡す環境変数。
@@ -30,10 +80,11 @@ export type GitOptions = {
  * GIT_SSH_COMMAND、GIT_EXTERNAL_DIFF、GIT_PROXY_COMMAND、GIT_ALTERNATE_OBJECT_DIRECTORIES、
  * LD_PRELOAD は、どれも任意のコマンドを実行させる経路になります。
  *
- * GIT_CONFIG_SYSTEM でサーバーが用意した 1 枚だけを読ませ、/etc/gitconfig と
- * 利用者のグローバル設定と、取得したリポジトリの .git/config の危険なキーを効かせません。
+ * GIT_CONFIG_SYSTEM でサーバーが用意した 1 枚だけを読ませ、/etc/gitconfig と利用者のグローバル設定を効かせません。
+ * 取得したリポジトリの .git/config は読まれるため、HARDENED_CONFIG を最後に重ねます。
+ * 呼び出し側の env が GIT_CONFIG_COUNT を上書きできないよう、設定は env より後ろに置きます。
  */
-function childEnv(extra: GitEnv = {}): GitEnv {
+function childEnv(extra: GitEnv = {}, config: GitConfigEntry[] = []): GitEnv {
   return {
     PATH: "/usr/bin:/bin:/usr/local/bin",
 
@@ -57,6 +108,8 @@ function childEnv(extra: GitEnv = {}): GitEnv {
     GIT_PAGER: "cat",
 
     ...extra,
+
+    ...configEnv([...HARDENED_CONFIG, ...config]),
   };
 }
 
@@ -65,21 +118,16 @@ function childEnv(extra: GitEnv = {}): GitEnv {
  *
  * `-c http.extraheader=...` は `ps` から見えてしまい、`.git/config` に書くと残ります。
  * GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n なら、その子プロセスの環境だけで完結します。
+ * 番号は childEnv が HARDENED_CONFIG の後ろに続けて振ります。
  */
-export function credentialEnv(): GitEnv {
+export function credentialConfig(): GitConfigEntry[] {
   if (!config.githubToken) {
-    return {};
+    return [];
   }
 
   const basic = Buffer.from(`x-access-token:${config.githubToken}`).toString("base64");
 
-  return {
-    GIT_CONFIG_COUNT: "1",
-
-    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-
-    GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
-  };
+  return [["http.https://github.com/.extraheader", `Authorization: Basic ${basic}`]];
 }
 
 // 値の位置に "-" で始まる文字列が入ると、git がそれをオプションとして読む。
@@ -94,12 +142,29 @@ export function checkValue(value: unknown, label: string): string {
   return text;
 }
 
+const TRUNCATION_NOTE = `\n... [truncated at ${MAX_OUTPUT_CHARS} characters; narrow the request]`;
+
 function truncate(text: string): string {
   if (text.length <= MAX_OUTPUT_CHARS) {
     return text;
   }
 
-  return `${text.slice(0, MAX_OUTPUT_CHARS)}\n... [truncated at ${MAX_OUTPUT_CHARS} characters; narrow the request]`;
+  return `${text.slice(0, MAX_OUTPUT_CHARS)}${TRUNCATION_NOTE}`;
+}
+
+/**
+ * 切り詰めの但し書きを本文から分ける。
+ * 差分から区画を落とすとき、但し書きが落とす区画の末尾に付いていると一緒に消え、
+ * 途中で切れたことが分からなくなる。先に外し、落としたあとで戻す
+ */
+export function splitTruncation(text: string): { body: string; truncated: boolean } {
+  return text.endsWith(TRUNCATION_NOTE)
+    ? { body: text.slice(0, -TRUNCATION_NOTE.length), truncated: true }
+    : { body: text, truncated: false };
+}
+
+export function truncationNote(): string {
+  return TRUNCATION_NOTE.trim();
 }
 
 /**
@@ -110,13 +175,13 @@ function truncate(text: string): string {
  */
 export function runGit(
   args: string[],
-  { cwd, env = {}, signal, onProgress }: GitOptions = {},
+  { cwd, env = {}, config: extraConfig = [], signal, onProgress }: GitOptions = {},
 ): Promise<GitResult> {
   return new Promise<GitResult>((resolve, reject) => {
     const child = spawn("git", args, {
       cwd,
 
-      env: childEnv(env),
+      env: childEnv(env, extraConfig),
 
       stdio: ["ignore", "pipe", "pipe"],
 
