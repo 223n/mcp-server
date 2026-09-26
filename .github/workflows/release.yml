@@ -232,8 +232,11 @@ jobs:
 
       - name: 検査を通す
         # 壊れたものをリリースブランチに載せない。
-        # GITHUB_TOKEN が開いた PR の CI は「承認待ち」で作られ、人が承認するまで動かないため、ここで検査しておく
-        run: npm run lint
+        # GITHUB_TOKEN が開いた PR の CI は「承認待ち」で作られ、人が承認するまで動かないため、ここで検査しておく。
+        # 文書と型の検査だけでなく、サーバーの試験も通す
+        run: |
+          npm run lint
+          npm test
 
       - name: コミットして押す
         env:
@@ -274,7 +277,7 @@ jobs:
             echo "1. GitHub Release を作ります"
             echo "1. \`${MAIN_BRANCH}\` を \`${DEVELOP_BRANCH}\` に戻します"
             echo
-            echo "検査（\`npm run lint\`）はワークフローの中で済んでいます。"
+            echo "検査（\`npm run lint\`と\`npm test\`）はワークフローの中で済んでいます。"
             echo "この PR の CI は「承認待ち」で作られます。結果を PR に出したいときは「Approve workflows to run」を押してください。"
             echo
             echo "## 変更の一覧（下書き）"

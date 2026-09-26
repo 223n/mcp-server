@@ -149,8 +149,8 @@ GitHubの画面で行う設定です。
 | `LICENSE`                            | `Copyright [yyyy] [name of copyright owner]`の行 | 行わない   |
 | `LICENSE`と`package.json`の`license` | ライセンスを変える場合                           | 行わない   |
 
-`version`はテンプレートの`0.2.0`から始まります。
-最初のリリースは`0.2.0`より大きい版だけが通ります。
+テンプレートから作った直後の`version`は`0.2.0`です。
+そのため、最初のリリースは`0.2.0`より大きい版だけが通ります。
 もっと小さい版から始めるなら、`main`と`develop`の両方で先に`version`を下げます。
 
 ## 使ううえでの注意
@@ -322,7 +322,7 @@ Nodeはワークフローが用意します。
 
 | ファイル              | いつ動くか                                                       | 何をするか                                                                                                                                                  |
 |-----------------------|------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、TypeScriptの型（`tsc --noEmit`）、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22と26）と、Dockerのイメージの確認もします |
+| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、TypeScriptの型（`tsc --noEmit`）、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22.18、22、26）と、Dockerのイメージの確認もします |
 | `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローとサーバーのコード（TypeScript）をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます                                                                      |
 | `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                                                                                      |
 | `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                                                                                              |
