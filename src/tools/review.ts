@@ -18,7 +18,7 @@ import { readCloneDiff } from "./git.ts";
 
 import { readPullDiff } from "./github.ts";
 
-import { runChat } from "./ollama.ts";
+import { runChatOrJob } from "./ollama.ts";
 
 function codeBlock(code: string): string {
   const body = numberLines(code.replace(/\r\n/g, "\n").split("\n"));
@@ -38,6 +38,7 @@ export type ReviewCodeArgs = {
   line_numbers?: boolean;
   save_output?: boolean;
   output_name?: string;
+  background?: boolean;
   structured?: boolean;
   language?: string;
   focus?: string;
@@ -136,7 +137,9 @@ ${args.code ? codeBlock(args.code) : ""}
   // code 引数のコードは、ファイルとは別に「code」という名前で 1 行目から渡している
   const codeLines = args.code ? args.code.replace(/\r\n/g, "\n").split("\n").length : 0;
 
-  return await runChat(
+  return await runChatOrJob(
+    "ollama_review_code",
+    args,
     {
       model: args.model ?? config.deepModel,
 

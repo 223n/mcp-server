@@ -644,6 +644,80 @@ describe("認証つきで HTTP_ALLOW_WRITES=true にしたとき", () => {
     }
   });
 
+  test("background のジョブはすぐに ID を返し、生成は応答のあとも続いて保存される", async () => {
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    let id = "";
+
+    try {
+      const { tools } = await client.listTools();
+
+      assert.ok(tools.some((t) => t.name === "ollama_job"));
+
+      for (const name of ["ollama_chat", "ollama_review_code", "ollama_explain_error"]) {
+        assert.ok(tools.find((t) => t.name === name)?.inputSchema.properties?.background, name);
+      }
+
+      const started = Date.now();
+
+      // MOCK_SLOW は 200 ミリ秒ごとに 50 回に分けて返す（約 10 秒）。受け付けはそれを待たない
+      const accepted = await client.callTool({
+        name: "ollama_chat",
+
+        arguments: { prompt: "MOCK_SLOW background", background: true, output_name: "job" },
+      });
+
+      assert.ok(!accepted.isError, text(accepted));
+
+      assert.ok(Date.now() - started < 3000, `accepting took ${Date.now() - started} ms`);
+
+      id = /background job ([0-9a-f-]{36})/.exec(text(accepted))?.[1] ?? "";
+
+      assert.ok(id, text(accepted));
+
+      assert.match(text(accepted), /Call `ollama_job` with \{"id": "[0-9a-f-]{36}"\}/);
+
+      const status = await client.callTool({ name: "ollama_job", arguments: { id } });
+
+      assert.match(text(status), /: (queued|running for \d+ s)/);
+    } finally {
+      // 受け付けたクライアントが先に切れても、生成は続く
+      await client.close();
+    }
+
+    const later = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      let done = "";
+
+      for (let i = 0; i < 60 && !done; i += 1) {
+        const status = await later.callTool({ name: "ollama_job", arguments: { id } });
+
+        if (/: done in/.test(text(status))) {
+          done = text(status);
+
+          assert.ok(status.content.some((block) => block.type === "resource_link"));
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      assert.match(done, /Saved: .*job\.md/);
+
+      assert.ok(existsSync(path.join(outDir, "job.md")));
+
+      const listed = await later.callTool({ name: "ollama_job", arguments: {} });
+
+      assert.match(text(listed), new RegExp(`${id} {2}ollama_chat`));
+
+      const health = await later.callTool({ name: "ollama_health", arguments: {} });
+
+      assert.match(text(health), /background jobs: enabled \(0 running, 0 queued, \d+ finished and kept for 1 h\)/);
+    } finally {
+      await later.close();
+    }
+  });
+
   test("危ない output_name は拒む", async () => {
     const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
 

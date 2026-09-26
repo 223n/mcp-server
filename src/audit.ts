@@ -31,6 +31,8 @@ const SAFE_KEYS = new Set([
   "profile",
   "save_output",
   "output_name",
+  "background",
+  "id",
   "line_numbers",
   "staged",
   "stat_only",
