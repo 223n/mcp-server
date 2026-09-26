@@ -185,6 +185,23 @@ describe("認証なしの HTTP", () => {
     }
   });
 
+  test("ollama_health に、このプロセスで任せた量の合計を出す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      // それまでの試験で、既定のモデル（mock:latest）と deep（qwen2.5-coder:14b）に任せている
+      assert.match(health, /by model: .*mock:latest: \d+ calls, \d+ prompt \+ \d+ output tokens/);
+
+      assert.match(health, /qwen2\.5-coder:14b: \d+ calls/);
+
+      assert.match(health, /by identity: anonymous: \d+ calls/);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("入っていないモデルを指定されたら、入っているモデルの一覧を添えて返す", async () => {
     const client = await connect(server.url);
 

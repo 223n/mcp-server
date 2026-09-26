@@ -116,6 +116,21 @@ export type ChatResult = {
   elapsedMs: number;
 };
 
+/**
+ * 1 回の生成でローカルのモデルに任せた量。監査の 1 行に載せ、プロセスの中で合計する。
+ * 鍵の名前は監査ログの JSON にそのまま出るため、snake_case にしている
+ */
+export type Usage = {
+  /** 実際に使ったモデル。別名（fast、deep）は読み替えたあとの名前 */
+  model: string;
+  prompt_tokens?: number;
+  output_tokens?: number;
+  done_reason?: string;
+
+  /** 同時実行の枠を待った時間 */
+  queued_ms: number;
+};
+
 /** ファイルを読んで組み立てた、モデルに渡す文脈 */
 export type FileContext = {
   block: string;

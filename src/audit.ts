@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { config } from "./config/config.ts";
 
+import type { Usage } from "./types.ts";
+
 // 誰の呼び出しかを、リクエストの処理の間だけ持ち回る。
 // createMcpHandler のファクトリには Express の req が渡らないため、
 // ミドルウェアからここに入れて、ツールの handler から読む
@@ -60,8 +62,51 @@ export type AuditEvent = {
   tool?: string;
   path?: string;
   args?: AuditFields;
+  usage?: Usage;
   error?: string;
 };
+
+// ツールの呼び出しの間だけ、ローカルのモデルに任せた量を持ち回る。
+// auditedCall はツールの戻り値（文字列）しか見ないため、runChat からここに入れてもらう
+const usageStore = new AsyncLocalStorage<{ usage?: Usage }>();
+
+/** プロセスが動き始めてからの合計。1 つのモデルか 1 人の識別子ごとの行 */
+export type UsageTotal = { calls: number; prompt_tokens: number; output_tokens: number };
+
+const totals = { models: new Map<string, UsageTotal>(), identities: new Map<string, UsageTotal>() };
+
+function addTo(map: Map<string, UsageTotal>, key: string, usage: Usage): void {
+  const total = map.get(key) ?? { calls: 0, prompt_tokens: 0, output_tokens: 0 };
+
+  total.calls += 1;
+
+  total.prompt_tokens += usage.prompt_tokens ?? 0;
+
+  total.output_tokens += usage.output_tokens ?? 0;
+
+  map.set(key, total);
+}
+
+/**
+ * ローカルのモデルに任せた量を記録する。runChat が生成のあとに呼ぶ。
+ * 呼び出しの監査の 1 行に載せ、モデルごとと識別子ごとの合計に足す
+ */
+export function recordUsage(usage: Usage): void {
+  const store = usageStore.getStore();
+
+  if (store) {
+    store.usage = usage;
+  }
+
+  addTo(totals.models, usage.model, usage);
+
+  addTo(totals.identities, currentIdentity(), usage);
+}
+
+/** プロセスが動き始めてからの合計。ollama_health が出す */
+export function usageTotals(): { models: Map<string, UsageTotal>; identities: Map<string, UsageTotal> } {
+  return totals;
+}
 
 /**
  * 監査に残してよい引数だけを抜き出したもの。
@@ -269,8 +314,10 @@ export function audit(event: AuditEvent): void {
 export async function auditedCall<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
   const started = Date.now();
 
+  const store: { usage?: Usage } = {};
+
   try {
-    const result = await run();
+    const result = await usageStore.run(store, run);
 
     audit({
       kind: "tool",
@@ -278,6 +325,7 @@ export async function auditedCall<T>(name: string, args: unknown, run: () => Pro
       ok: true,
       ms: Date.now() - started,
       args: auditFields(args),
+      ...(store.usage ? { usage: store.usage } : {}),
     });
 
     return result;
@@ -288,6 +336,7 @@ export async function auditedCall<T>(name: string, args: unknown, run: () => Pro
       ok: false,
       ms: Date.now() - started,
       args: auditFields(args),
+      ...(store.usage ? { usage: store.usage } : {}),
       error: clip(error instanceof Error ? error.message : error, MAX_ERROR_CHARS),
     });
 

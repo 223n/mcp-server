@@ -278,6 +278,19 @@ GitHubが認証のない要求に404を返すためで、名前の打ち間違�
   - `docker-compose.yml`は、名前付きボリューム`audit-log`を`/var/log/ollama-mcp`にマウントし、既定でここに書きます。`FILE_ROOTS`の外に置き、ファイルのツールから読めないようにしています。`FILE_ROOTS`の中を指定すると、起動時に警告してファイルには書きません
   - HTTPとstdioの両方のプロセスが同じファイルに追記します。古いファイルは、HTTPのプロセスが起動時と1日ごとに消します（`AUDIT_RETENTION_DAYS`、既定30日）
   - 読むときは`docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl'`です。`jq`を通すと絞り込めます
+- ローカルのモデルに生成を任せた呼び出しには`usage`が付きます。実際に使ったモデル（別名は読み替えたあとの名前）、`prompt_tokens`、`output_tokens`、`done_reason`、枠を待った時間（`queued_ms`）です
+
+    ```json
+    {"ts":"2026-09-26T12:00:00.000Z","identity":"stdio","kind":"tool","tool":"ollama_chat","ok":true,"ms":1200,"args":{"model":"fast"},"usage":{"model":"nucbox-fast:latest","prompt_tokens":4096,"output_tokens":301,"done_reason":"stop","queued_ms":0}}
+    ```
+
+  - どれだけ任せたかをモデルごとに数えるときは、次のようにします
+
+    ```bash
+    docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl' | jq -s 'map(select(.usage)) | group_by(.usage.model) | map({model: .[0].usage.model, calls: length, prompt_tokens: (map(.usage.prompt_tokens // 0) | add), output_tokens: (map(.usage.output_tokens // 0) | add)})'
+    ```
+
+  - `ollama_health`は、そのプロセスが動き始めてからの合計を、モデルごとと識別子ごとに出します。stdioのプロセスはクライアントごとに起動し直されるため、長い期間はファイルで数えます
 - `identity`は、Cloudflare AccessのJWTの`email`、サービストークンなら`service:<クライアントID>`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
 - `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
   - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
@@ -426,6 +439,7 @@ npm test
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
 - `resources/read`で復号できないURI（壊れた符号化、NUL）を拒んだときも、監査ログに残ること
+- 生成を任せた呼び出しの記録に`usage`が付き、`ollama_health`がモデルごとと識別子ごとの合計を出すこと
 - 監査ログを日付ごとのファイルにも追記し、`FILE_ROOTS`の中の書き出し先を拒み、古いファイルだけを消すこと。CIでは、stdioの呼び出しの記録が名前付きボリュームに残ることを確かめます
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと

@@ -9,6 +9,8 @@ import type {
   ToolResult,
 } from "../types.ts";
 
+import { recordUsage } from "../audit.ts";
+
 import { config } from "../config/config.ts";
 
 import { getSystemPrompt } from "../config/prompts.ts";
@@ -217,6 +219,8 @@ export async function runChat(
 
   const modelName = resolveModel(model) ?? config.defaultModel;
 
+  const requested = Date.now();
+
   const result = await limiter.run(
     () =>
       ollamaChat({
@@ -248,6 +252,19 @@ export async function runChat(
     },
   ).catch(async (error: unknown) => {
     throw await explainMissingModel(error, signal);
+  });
+
+  // 任せた量を監査の 1 行とプロセスの合計に残す。枠を待った時間は、全体から生成の時間を引いて求める
+  recordUsage({
+    model: result.model,
+
+    prompt_tokens: result.promptTokens,
+
+    output_tokens: result.outputTokens,
+
+    done_reason: result.doneReason,
+
+    queued_ms: Math.max(0, Date.now() - requested - result.elapsedMs),
   });
 
   if (save) {

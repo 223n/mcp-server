@@ -292,3 +292,43 @@ describe("監査ログのファイル", () => {
     assert.deepEqual(readdirSync(dir).sort(), ["audit-20260830.jsonl", "audit-20260926.jsonl", "notes.txt"]);
   });
 });
+
+test("ローカルのモデルに任せた量を、呼び出しの記録に載せて合計する", async () => {
+  const { recordUsage, usageTotals } = modules;
+
+  const usage = { model: "usage-test:1b", prompt_tokens: 120, output_tokens: 30, done_reason: "stop", queued_ms: 5 };
+
+  const ok = await captureAsync(() =>
+    auditedCall("ollama_chat", { prompt: "秘密の指示", model: "fast" }, async () => {
+      recordUsage(usage);
+
+      return "done";
+    }),
+  );
+
+  const line = JSON.parse(ok.lines[0] ?? "{}");
+
+  assert.deepEqual(line.usage, usage);
+
+  assert.equal(line.args.model, "fast");
+
+  assert.doesNotMatch(ok.lines[0] ?? "", /秘密の指示/);
+
+  // 生成のあとで失敗しても、任せた量は記録に残す
+  const failed = await captureAsync(() =>
+    auditedCall("ollama_chat", { prompt: "x" }, async () => {
+      recordUsage(usage);
+
+      throw new Error("save failed");
+    }),
+  );
+
+  assert.deepEqual(JSON.parse(failed.lines[0] ?? "{}").usage, usage);
+
+  assert.deepEqual(usageTotals().models.get("usage-test:1b"), { calls: 2, prompt_tokens: 240, output_tokens: 60 });
+
+  // 呼び出しの外で記録しても、別の呼び出しの 1 行には混ざらない
+  const other = await captureAsync(() => auditedCall("ollama_health", {}, async () => "fine"));
+
+  assert.equal(JSON.parse(other.lines[0] ?? "{}").usage, undefined);
+});

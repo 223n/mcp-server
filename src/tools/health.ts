@@ -1,5 +1,9 @@
 import type { ToolContext, ToolScope } from "../types.ts";
 
+import type { UsageTotal } from "../audit.ts";
+
+import { usageTotals } from "../audit.ts";
+
 import { config } from "../config/config.ts";
 
 import type { OllamaTags, OllamaVersion } from "../ollama/client.ts";
@@ -15,6 +19,15 @@ import { githubReady } from "./github.ts";
 import { limiterStats } from "./ollama.ts";
 
 import { outputLabel, outputReady } from "./output.ts";
+
+// 「mock:latest: 2 calls, 20 prompt + 6 output tokens; ...」の形にする
+function describeTotals(map: Map<string, UsageTotal>): string {
+  return (
+    [...map]
+      .map(([key, t]) => `${key}: ${t.calls} calls, ${t.prompt_tokens} prompt + ${t.output_tokens} output tokens`)
+      .join("; ") || "none"
+  );
+}
 
 export function createHealthTool({ allowFiles, allowWrites = false, local = false }: ToolScope) {
   return async function ollamaHealth(_args: unknown, ctx?: ToolContext): Promise<string> {
@@ -49,6 +62,9 @@ export function createHealthTool({ allowFiles, allowWrites = false, local = fals
       `deep model: ${config.deepModel}`,
       `timeout: ${Math.round(config.ollamaTimeout / 1000)} s (idle), ${Math.round(config.ollamaMaxDuration / 1000)} s (total)`,
       `concurrency: ${stats.active} running, ${stats.queued} queued (max ${stats.max} + ${stats.maxQueue} queued)`,
+      // このプロセスが動き始めてからの合計。stdio はクライアントごとに起動し直されるため、長い期間は監査ログのファイルで数える
+      `delegated since this process started, by model: ${describeTotals(usageTotals().models)}`,
+      `delegated since this process started, by identity: ${describeTotals(usageTotals().identities)}`,
       `file access: ${files}`,
       `output saving: ${output}`,
       `git clone: ${clone}`,
