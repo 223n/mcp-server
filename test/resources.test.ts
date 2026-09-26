@@ -187,3 +187,49 @@ test("知らないスキームは拒む", async () => {
 
   await close();
 });
+
+// 監査は stderr に出る。console.error を差し替えて、resources の記録だけを取り出す
+async function auditedRead(client: Client, uri: string): Promise<{ error: unknown; records: Record<string, unknown>[] }> {
+  const lines: string[] = [];
+
+  const original = console.error;
+
+  console.error = (line: unknown) => lines.push(String(line));
+
+  let error: unknown;
+
+  try {
+    await client.readResource({ uri });
+  } catch (caught) {
+    error = caught;
+  } finally {
+    console.error = original;
+  }
+
+  const records = lines
+    .filter((line) => line.startsWith("{"))
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((record) => record.kind === "resource");
+
+  return { error, records };
+}
+
+test("復号できない URI も、拒んだことを監査に残す", async () => {
+  const { client, close } = await connect();
+
+  try {
+    for (const uri of ["file:///%E0%A4%A", "file:///x%00y"]) {
+      const { error, records } = await auditedRead(client, uri);
+
+      assert.ok(error, `${uri} should be refused`);
+
+      assert.equal(records.length, 1, `${uri}: ${JSON.stringify(records)}`);
+
+      assert.equal(records[0]?.ok, false, uri);
+
+      assert.equal(typeof records[0]?.path, "string", uri);
+    }
+  } finally {
+    await close();
+  }
+});
