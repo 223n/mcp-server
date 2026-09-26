@@ -672,3 +672,54 @@ describe("requestTimeout は応答の長さに効かない", () => {
     }
   });
 });
+
+describe("失敗した要求の回数の制限", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, MCP_AUTH_TOKEN: "test-token" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  const NOTIFY = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+  test("成功した要求は数えない", async () => {
+    for (let i = 0; i < 80; i += 1) {
+      const response = await post(server.url, {
+        body: NOTIFY,
+        headers: { Authorization: "Bearer test-token" },
+      });
+
+      assert.equal(response.status, 202, `request ${i}`);
+    }
+  });
+
+  test("認証の失敗が 1 分に 60 回を超えると、429 で断る", async () => {
+    for (let i = 0; i < 60; i += 1) {
+      const response = await post(server.url, { body: INITIALIZE });
+
+      assert.equal(response.status, 401, `request ${i}`);
+    }
+
+    const limited = await post(server.url, { body: INITIALIZE });
+
+    assert.equal(limited.status, 429);
+
+    assert.ok(limited.headers.get("retry-after"), "Retry-After is missing");
+
+    const body = (await limited.json()) as { jsonrpc: string; error: { code: number; message: string } };
+
+    assert.equal(body.jsonrpc, "2.0");
+
+    assert.match(body.error.message, /Too many failed requests/);
+  });
+});
