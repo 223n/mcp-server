@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import { after, test } from "node:test";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+
+import { tmpdir } from "node:os";
+
+import path from "node:path";
+
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
@@ -8,8 +14,11 @@ process.chdir(WORK_DIR);
 
 after(removeCreatedTrees);
 
-const { audit, auditedCall, auditFields, currentIdentity, setDefaultIdentity, withIdentity } =
-  await import("../src/audit.ts");
+const modules = await import("../src/audit.ts");
+
+const { audit, auditedCall, auditFields, currentIdentity, setDefaultIdentity, withIdentity } = modules;
+
+const { config } = await import("../src/config/config.ts");
 
 // 監査は stderr に出る。console.error を差し替えて中身を見る
 function capture<T>(run: () => T): { result: T; lines: string[] } {
@@ -70,6 +79,17 @@ test("渡したファイルのパスは残す", () => {
   assert.deepEqual(fields.files, ["C:\\dev\\a.php", "C:\\dev\\b.php"]);
 
   assert.deepEqual(fields.paths, ["x.md"]);
+});
+
+test("レビューした差分の出どころは、中の鍵も絞って残す", () => {
+  const fields = auditFields({
+    git_diff: { repo: "223n/mcp-server", ref: "main", staged: true, prompt: "secret" },
+    pull_request: { repo: "223n/mcp-server", number: 7 },
+  });
+
+  assert.deepEqual(fields.git_diff, { repo: "223n/mcp-server", ref: "main", staged: true });
+
+  assert.deepEqual(fields.pull_request, { repo: "223n/mcp-server", number: 7 });
 });
 
 test("パスが多いときは件数を添えて切る", () => {
@@ -180,4 +200,146 @@ test("識別子は毎行に入る", () => {
   );
 
   assert.equal(JSON.parse(lines[0] ?? "{}").identity, "you@example.com");
+});
+
+describe("監査ログのファイル", () => {
+  const { initAuditLog, pruneAuditLogs } = modules;
+
+  let saved: { dir: string; roots: typeof config.fileRoots; days: number };
+
+  let dir: string;
+
+  const warnings: string[] = [];
+
+  const warn = (message: string) => warnings.push(message);
+
+  before(() => {
+    saved = { dir: config.auditLogDir, roots: config.fileRoots, days: config.auditRetentionDays };
+  });
+
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-audit-")));
+
+    config.auditLogDir = dir;
+
+    config.fileRoots = [];
+
+    warnings.length = 0;
+  });
+
+  afterEach(() => {
+    config.auditLogDir = "";
+
+    initAuditLog({ warn });
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  after(() => {
+    config.auditLogDir = saved.dir;
+
+    config.fileRoots = saved.roots;
+
+    config.auditRetentionDays = saved.days;
+  });
+
+  test("設定すると、標準エラーに加えて日付ごとのファイルに 1 行ずつ追記する", () => {
+    assert.equal(initAuditLog({ warn }), true);
+
+    const { lines } = capture(() => {
+      audit({ kind: "tool", tool: "git_write", ok: true, ms: 1 });
+
+      audit({ kind: "resource", ok: false, ms: 2, path: "/work/dev/x" });
+    });
+
+    assert.equal(lines.length, 2);
+
+    const files = readdirSync(dir);
+
+    assert.equal(files.length, 1);
+
+    assert.match(files[0] ?? "", /^audit-\d{8}\.jsonl$/);
+
+    const written = readFileSync(path.join(dir, files[0] ?? ""), "utf8").trim().split("\n");
+
+    assert.deepEqual(written, lines);
+  });
+
+  test("FILE_ROOTS の中は、ファイルのツールから読めてしまうため拒む", () => {
+    config.fileRoots = [{ hostPrefix: dir.toLowerCase(), hostLabel: dir, localPath: dir }];
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    assert.match(warnings.join("\n"), /inside FILE_ROOTS/);
+  });
+
+  test("無い場所と相対パスは、使わずに知らせる", () => {
+    config.auditLogDir = path.join(dir, "missing");
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    config.auditLogDir = "relative/audit";
+
+    assert.equal(initAuditLog({ warn }), false);
+
+    assert.match(warnings.join("\n"), /does not exist/);
+
+    assert.match(warnings.join("\n"), /absolute path/);
+  });
+
+  test("残す日数より古い監査ログだけを消し、ほかのファイルには触れない", () => {
+    assert.equal(initAuditLog({ warn }), true);
+
+    config.auditRetentionDays = 30;
+
+    for (const name of ["audit-20260801.jsonl", "audit-20260830.jsonl", "audit-20260926.jsonl", "notes.txt"]) {
+      writeFileSync(path.join(dir, name), "{}\n");
+    }
+
+    const removed = pruneAuditLogs(new Date("2026-09-26T12:00:00Z"));
+
+    assert.deepEqual(removed, ["audit-20260801.jsonl"]);
+
+    assert.deepEqual(readdirSync(dir).sort(), ["audit-20260830.jsonl", "audit-20260926.jsonl", "notes.txt"]);
+  });
+});
+
+test("ローカルのモデルに任せた量を、呼び出しの記録に載せて合計する", async () => {
+  const { recordUsage, usageTotals } = modules;
+
+  const usage = { model: "usage-test:1b", prompt_tokens: 120, output_tokens: 30, done_reason: "stop", queued_ms: 5 };
+
+  const ok = await captureAsync(() =>
+    auditedCall("ollama_chat", { prompt: "秘密の指示", model: "fast" }, async () => {
+      recordUsage(usage);
+
+      return "done";
+    }),
+  );
+
+  const line = JSON.parse(ok.lines[0] ?? "{}");
+
+  assert.deepEqual(line.usage, usage);
+
+  assert.equal(line.args.model, "fast");
+
+  assert.doesNotMatch(ok.lines[0] ?? "", /秘密の指示/);
+
+  // 生成のあとで失敗しても、任せた量は記録に残す
+  const failed = await captureAsync(() =>
+    auditedCall("ollama_chat", { prompt: "x" }, async () => {
+      recordUsage(usage);
+
+      throw new Error("save failed");
+    }),
+  );
+
+  assert.deepEqual(JSON.parse(failed.lines[0] ?? "{}").usage, usage);
+
+  assert.deepEqual(usageTotals().models.get("usage-test:1b"), { calls: 2, prompt_tokens: 240, output_tokens: 60 });
+
+  // 呼び出しの外で記録しても、別の呼び出しの 1 行には混ざらない
+  const other = await captureAsync(() => auditedCall("ollama_health", {}, async () => "fine"));
+
+  assert.equal(JSON.parse(other.lines[0] ?? "{}").usage, undefined);
 });

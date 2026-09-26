@@ -98,6 +98,9 @@ WindowsではPowerShell 7以上で`scripts/setup.ps1`を使います。
 実行のあと、手元は`feature/setup-repository`ブランチに残ります。
 開かれたPull Requestをマージしたら、`develop`に戻してから作業を始めます。
 
+書き換えるものが無ければ、ブランチとPull Requestは作りません。
+Pull Requestをマージする前に実行し直すと、名前の書き換えは飛ばし、ファイルを変えずに案内を出します。
+
 ### 必要な設定
 
 GitHubの画面で行う設定です。
@@ -149,8 +152,8 @@ GitHubの画面で行う設定です。
 | `LICENSE`                            | `Copyright [yyyy] [name of copyright owner]`の行 | 行わない   |
 | `LICENSE`と`package.json`の`license` | ライセンスを変える場合                           | 行わない   |
 
-`version`はテンプレートの`0.2.0`から始まります。
-最初のリリースは`0.2.0`より大きい版だけが通ります。
+テンプレートから作った直後の`version`は`0.2.0`です。
+そのため、最初のリリースは`0.2.0`より大きい版だけが通ります。
 もっと小さい版から始めるなら、`main`と`develop`の両方で先に`version`を下げます。
 
 ## 使ううえでの注意
@@ -274,7 +277,10 @@ develop ──▶ release/vX.Y.Z ──(Pull Request)──▶ main ──▶ �
 
 版は`package.json`の`version`で管理します。
 `develop`と`main`の版、最新のタグのどれよりも大きい版だけを受け付けます。
-すでにあるタグや、開いたままの`release/*`ブランチがあると止まります。
+すでにあるタグや、残っている`release/*`ブランチがあると止まります。
+止まったときは、ブランチごとに、開いているPull Requestか、ブランチを消すコマンドを表示します。
+Pull Requestを閉じてもブランチは消えないため、閉じたときはブランチも消してから実行し直します。
+Pull Requestを開く段で失敗したときは、ワークフローが押したブランチを消します。
 `-rc.1`のようなプレリリースの版は、GitHub Releaseでもプレリリースになります。
 
 `auto_merge`を有効にして実行すると、Pull Requestを人手で確かめずにマージし、公開まで一気に進めます。
@@ -322,8 +328,8 @@ Nodeはワークフローが用意します。
 
 | ファイル              | いつ動くか                                                       | 何をするか                                                                                                                                                  |
 |-----------------------|------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、TypeScriptの型（`tsc --noEmit`）、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22と26）と、Dockerのイメージの確認もします |
-| `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローの安全性をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます                                                                      |
+| `ci.yml`              | `main`と`develop`への`push`、Pull Request、手動                  | 日本語の文書、TypeScriptの型（`tsc --noEmit`）、ワークフローの構文（actionlint）、ワークフローの安全性（zizmor）を検査します。サーバーの試験（Node 22.18、22、26）と、Dockerのイメージの確認もします |
+| `codeql.yml`          | `main`と`develop`への`push`、Pull Request、毎週月曜、手動        | ワークフローとサーバーのコード（TypeScript）をCodeQLで走査します。結果は「Security」→「Code scanning」に出ます                                                                      |
 | `labels.yml`          | `.github/labels.yml`か`.github/workflows/labels.yml`の変更、手動 | リポジトリのラベルを定義に揃えます。Pull Requestでは差分の表示だけです                                                                                      |
 | `labeler.yml`         | Pull Requestを開いたとき、更新したとき                           | 変えたファイルとブランチ名からラベルを付けます                                                                                                              |
 | `branch-guard.yml`    | Pull Requestを開いたとき、更新したとき                           | headブランチが`main`か`develop`なら失敗します。マージは止めません                                                                                           |

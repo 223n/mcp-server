@@ -6,7 +6,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 
 import type { NextFunction, Request, Response } from "express";
 
-import { after, test } from "node:test";
+import { after, mock, test } from "node:test";
 
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
@@ -235,4 +235,81 @@ test("監査の識別子: email のない JWT では sub を使う", async () =>
 
 test("監査の識別子: 通らなかったときは付かない", async () => {
   assert.equal(await identityFor({ authorization: "Bearer wrong" }), undefined);
+});
+
+test("監査の識別子: サービストークンは common_name で見分ける", async () => {
+  const { config } = await import("../src/config/config.ts");
+
+  const { email, ...serviceToken } = good;
+
+  assert.ok(email);
+
+  const saved = config.cfAccessAllowedEmails;
+
+  config.cfAccessAllowedEmails = [];
+
+  // Cloudflare のサービストークンの JWT は、sub が空の文字列で、クライアント ID が common_name に入る
+  const identity = (payload: object) => identityFor({ "cf-access-jwt-assertion": makeToken(payload) });
+
+  try {
+    assert.equal(await identity({ ...serviceToken, sub: "", common_name: "a.access" }), "service:a.access");
+
+    assert.equal(await identity({ ...serviceToken, sub: "", common_name: "b.access" }), "service:b.access");
+
+    assert.equal(await identity({ ...serviceToken, sub: "" }), "sub:unknown");
+
+    assert.equal(await identity({ ...serviceToken, sub: "user-1" }), "sub:user-1");
+  } finally {
+    config.cfAccessAllowedEmails = saved;
+  }
+});
+
+test("知らない kid の JWT が同時に届いても、鍵の取得は 1 回で済む", async () => {
+  // 前の取得から、取り直してよい間隔（60 秒）より後の時刻にする
+  mock.timers.enable({ apis: ["Date"], now: Date.now() + 2 * 60 * 1000 });
+
+  try {
+    const before = certFetches;
+
+    const results = await Promise.all(
+      Array.from({ length: 50 }, (_, i) => verifyAccessJwt(makeToken(good, { kid: `forged-${i}` }))),
+    );
+
+    assert.ok(results.every((result) => result === null));
+
+    assert.equal(certFetches - before, 1);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("鍵の取得に失敗した直後は取り直さず、手元の鍵で確かめ続ける", async () => {
+  const realFetch = globalThis.fetch;
+
+  let failures = 0;
+
+  globalThis.fetch = async () => {
+    failures += 1;
+
+    return new Response("unavailable", { status: 503 });
+  };
+
+  mock.timers.enable({ apis: ["Date"], now: Date.now() + 10 * 60 * 1000 });
+
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      assert.equal(await verifyAccessJwt(makeToken(good, { kid: `forged-again-${i}` })), null);
+    }
+
+    assert.equal(failures, 1);
+
+    // 取り直せなくても、手元の鍵で正しい JWT は通る（期限は進めた時刻に合わせる）
+    const fresh = { ...good, exp: Math.floor(Date.now() / 1000) + 300 };
+
+    assert.equal((await verifyAccessJwt(makeToken(fresh)))?.email, "me@example.com");
+  } finally {
+    mock.timers.reset();
+
+    globalThis.fetch = realFetch;
+  }
 });

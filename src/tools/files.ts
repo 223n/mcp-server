@@ -4,11 +4,13 @@ import { open, readdir, realpath, stat } from "node:fs/promises";
 
 import path from "node:path";
 
-import type { FileContext, InlineFile, Root } from "../types.ts";
+import type { ContextSection, FileContext, InlineFile, Root } from "../types.ts";
 
 import { config } from "../config/config.ts";
 
 import { compileGlob } from "./glob.ts";
+
+import { isSensitiveName, SENSITIVE_DIRS, SENSITIVE_FILES } from "./sensitive.ts";
 
 /** 許可ルートの中だと確かめ終えたパス。root と realRoot はホスト側の表記に戻すために持つ */
 type ResolvedPath = { local: string; root: Root; realRoot: string };
@@ -17,17 +19,21 @@ type ResolvedPath = { local: string; root: Root; realRoot: string };
 type Target = { local: string; display: string; start?: number; end?: number };
 
 /** 読み終えた 1 ファイル分の材料。render がこれをフェンスで囲む */
-type Part = { display: string; label: string; body: string; extension: string };
+type Part = ContextSection;
 
 /** 幅優先でたどるときの 1 段。depth は起点の直下を 0 とした深さ */
 type Crawl = { dir: string; relative: string; depth: number };
 
 const MAX_FILE_BYTES = 512 * 1024;
 
-// qwen2.5-coder のコンテキスト長 32k トークンのうち、渡すファイルに使ってよい量の目安。
+// 予算に入らず落としたファイルの名前を、断り書きに並べる上限
+const MAX_OMITTED_NAMES = 30;
+
+// 渡すファイルに使ってよい量の既定の目安（コンテキストを 32k トークンと見込んだ場合）。
 // 残りは system プロンプト、利用者の指示、出力（既定 4096）に充てる。
+// OLLAMA_NUM_CTX を設定したときは、runChat がその値から予算を決めて渡す。
 // 文字数で測ると、日本語のコメントが多いコードで大きく外れるため、トークン数の目安で測る
-const MAX_PROMPT_TOKENS = 24000;
+export const DEFAULT_PROMPT_BUDGET = 24000;
 
 // グロブ 1 件が展開してよいファイル数の上限
 const MAX_EXPANDED_FILES = 40;
@@ -36,46 +42,6 @@ const MAX_EXPANDED_FILES = 40;
 const EXPAND_MAX_DIRS = 5000;
 
 const EXPAND_TIME_BUDGET_MS = 10000;
-
-// 秘密情報を含みやすいファイル名（大文字小文字は区別しない）
-const SENSITIVE_FILES = [
-  /^\.env(?!\.(example|sample|template|dist)$)(\..+)?$/i,
-  /^\.env[-_]/i,
-  /\.env$/i,
-  /^\.envrc$/i,
-  /\.(pem|key|p12|pfx|keystore|jks|ppk|kdbx|tfstate|tfvars)$/i,
-  /^id_(rsa|dsa|ecdsa|ed25519)/i,
-  /^\.?credentials(\.(json|ya?ml|xml|ini|toml))?$/i,
-  /^\.(npmrc|yarnrc|yarnrc\.yml|pypirc|netrc|pgpass|htpasswd|git-credentials|dockercfg)$/i,
-  /^_netrc$/i,
-  /^secrets?\.(json|ya?ml|toml|ini|env|php|xml)$/i,
-  /^service[-_]?account.*\.json$/i,
-  /^token$/i,
-  /^app_local\.php$/i,
-  /^wp-config\.php$/i,
-  /^\.dev\.vars/i,
-  /\.tfstate(\.backup)?$/i,
-  /\.p8$/i,
-  /^\.vault-token$/i,
-  /^client_secret.*\.json$/i,
-  /^acme\.json$/i,
-  /^google-services\.json$/i,
-  /^GoogleService-Info\.plist$/i,
-  // ここから下は、グロブでまとめて拾うようになったことで必要になったもの。
-  // 「名前を知っている 1 件の誤読を止める」大きさでは、掃き出しに足りない
-  /^\.?env[.\-_](?!(example|sample|template|dist)$)/i,
-  /^(appsettings|local\.settings)(\..+)?\.json$/i,
-  /^web\.config$/i,
-  /^\.htaccess$/i,
-  /\.(crt|cer|der)$/i,
-  /^\.(bash|zsh|mysql|psql)_history$/i,
-  /^settings\.local\.json$/i,
-  /^docker-compose\.override\.ya?ml$/i,
-  /^\.mcp\.json$/i,
-];
-
-// 秘密情報を置く慣習のあるディレクトリ名
-const SENSITIVE_DIRS = /^(\.(ssh|aws|azure|gcloud|gnupg|docker|kube|git|cloudflared|wrangler|terraform)|secrets?)$/i;
 
 // 一覧で中に入らないディレクトリ（依存やビルドの出力で、数が多く役に立たない）
 const SKIPPED_DIRS = /^(node_modules|vendor|\.svn|\.hg|__pycache__|\.venv|\.cache)$/i;
@@ -167,14 +133,9 @@ async function verifyComponents(realRoot: string, realLocal: string, input: stri
       throw new Error(`Use the full (long) path name, short or aliased names are not supported: ${input}`);
     }
 
-    // どの段も、ファイルの拒否リストとディレクトリの拒否リストの両方で判定する。
-    // 「最後の段はファイルだから SENSITIVE_FILES だけ」にすると、ディレクトリを渡したときに
-    // .ssh や .kube や secrets が通り、逆に「ディレクトリとして解決したから SENSITIVE_DIRS だけ」に
-    // すると .env が通る。ここは入口ごとに変えず、常に両方で拒む
-    const secret =
-      SENSITIVE_DIRS.test(actual) || SENSITIVE_FILES.some((pattern) => pattern.test(actual));
-
-    if (secret) {
+    // どの段も、ファイルの拒否リストとディレクトリの拒否リストの両方で判定する（isSensitiveName）。
+    // ここは入口ごとに変えず、git の diff と GitHub の pr_diff も同じ判定を使う
+    if (isSensitiveName(actual)) {
       throw new Error(`Refusing to read a file that may contain secrets: ${input}`);
     }
 
@@ -722,12 +683,22 @@ function renderTruncated(part: Part, budget: number): string {
 export async function buildFileContext({
   files = [],
   inlineFiles = [],
+  sections = [],
   lineNumbers = false,
+  budget = DEFAULT_PROMPT_BUDGET,
   signal,
 }: {
   files?: string[];
   inlineFiles?: InlineFile[];
+
+  /** サーバーが組み立てた差分など。本題なので、files と inline_files より先に予算を使う */
+  sections?: ContextSection[];
+
   lineNumbers?: boolean;
+
+  /** 渡すファイルに使ってよいトークン数の目安 */
+  budget?: number;
+
   signal?: AbortSignal;
 } = {}): Promise<FileContext & { usedTokens: number }> {
   if (files.length > 0 && readRoots().length === 0) {
@@ -766,11 +737,29 @@ export async function buildFileContext({
 
   let first: Part | undefined;
 
+  for (const part of sections) {
+    first ??= part;
+
+    const text = render(part);
+
+    const tokens = estimateTokens(text);
+
+    if (used + tokens > budget) {
+      omitted.push(part.display);
+
+      continue;
+    }
+
+    used += tokens;
+
+    blocks.push(text);
+  }
+
   for (const target of unique) {
     signal?.throwIfAborted();
 
     // 予算を使い切ったあとは読まない。読んでから捨てると、40 件 x 512 KB を無駄に読むことになる
-    if (used >= MAX_PROMPT_TOKENS && first) {
+    if (used >= budget && first) {
       omitted.push(target.display);
 
       continue;
@@ -784,7 +773,7 @@ export async function buildFileContext({
 
     const tokens = estimateTokens(text);
 
-    if (used + tokens > MAX_PROMPT_TOKENS) {
+    if (used + tokens > budget) {
       omitted.push(part.display);
 
       continue;
@@ -804,7 +793,7 @@ export async function buildFileContext({
 
     const tokens = estimateTokens(text);
 
-    if (used + tokens > MAX_PROMPT_TOKENS) {
+    if (used + tokens > budget) {
       omitted.push(part.display);
 
       continue;
@@ -818,18 +807,24 @@ export async function buildFileContext({
   const notes: string[] = [];
 
   if (blocks.length === 0 && first) {
-    blocks.push(renderTruncated(first, MAX_PROMPT_TOKENS));
+    blocks.push(renderTruncated(first, budget));
 
     omitted.shift();
 
     notes.push(
-      `WARNING: ${first.display} did not fit the input budget (${MAX_PROMPT_TOKENS} tokens) and was cut off. Pass a line range such as \`path#L1-500\`.`,
+      `WARNING: ${first.display} did not fit the input budget (${budget} tokens) and was cut off. Pass a line range such as \`path#L1-500\`.`,
     );
   }
 
   if (omitted.length > 0) {
+    // 差分は数百のファイルに及ぶことがある。名前をすべて並べると、断り書きだけで Claude のトークンを使う
+    const names =
+      omitted.length > MAX_OMITTED_NAMES
+        ? `${omitted.slice(0, MAX_OMITTED_NAMES).join(", ")}, and ${omitted.length - MAX_OMITTED_NAMES} more`
+        : omitted.join(", ");
+
     notes.push(
-      `WARNING: ${omitted.length} of ${unique.length + inlineFiles.length} files were omitted because the input budget (${MAX_PROMPT_TOKENS} tokens) was reached: ${omitted.join(", ")}. Split them across several calls.`,
+      `WARNING: ${omitted.length} of ${sections.length + unique.length + inlineFiles.length} files were omitted because the input budget (${budget} tokens) was reached: ${names}. Split them across several calls.`,
     );
   }
 

@@ -8,6 +8,19 @@ services:
 
     restart: unless-stopped
 
+    # 権限を絞る。サーバーは第三者のリポジトリを git で扱うため、コードの約束が外れたときに
+    # できることを小さくしておく。ルートのファイルシステムは読み取り専用にし、
+    # 書けるのは /tmp（メモリ上）と、下の volumes で読み書きできる形にした書き込み先だけにする。
+    # .github/workflows/ci.yml の「起動して応答を確かめる」も、同じ絞り込みで起動する
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+
     # 公開はこの PC 内（127.0.0.1）に限定。外部からは Cloudflare Tunnel 経由のみ
     ports:
       - "127.0.0.1:3000:3000"
@@ -29,6 +42,10 @@ services:
       # Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-2}
       OLLAMA_MAX_QUEUE: ${OLLAMA_MAX_QUEUE:-8}
+      # Ollama に送るコンテキスト長（num_ctx）。0 なら送らず、Ollama の設定に任せる
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-0}
+      # HTTP の要求を受け取り終えるまでの上限（ミリ秒）。生成の時間には効かない
+      HTTP_REQUEST_TIMEOUT: ${HTTP_REQUEST_TIMEOUT:-60000}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech}
       HTTP_ALLOW_FILES: ${HTTP_ALLOW_FILES:-false}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
@@ -39,7 +56,7 @@ services:
       # stdio と、HTTP_ALLOW_FILES=true かつ認証を設定した HTTP で使われる
       FILE_ROOTS: 'C:\dev=/work/dev;C:\docker=/work/docker'
       # ローカルのモデルの出力を書き出す先。空なら保存の機能ごと無効。
-      # 例: 'C:\dev\ollama-out=/work/dev/ollama-out'（先にホスト側で作っておくこと）
+      # 例: 'C:\dev\ollama-out=/work/dev/ollama-out'（下の volumes で、この場所を読み書きできる形でマウントしている）
       OUTPUT_DIR: ${OUTPUT_DIR:-}
       # HTTP でも保存を許すかどうか。HTTP_ALLOW_FILES とは別に持ち、既定は false
       HTTP_ALLOW_WRITES: ${HTTP_ALLOW_WRITES:-false}
@@ -59,12 +76,24 @@ services:
       GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:-}
       # PR の作成とコメントを許すかどうか。stdio でだけ効き、HTTP では常に無効
       GITHUB_ALLOW_WRITE: ${GITHUB_ALLOW_WRITE:-false}
+      # 監査ログの書き出し先（コンテナーの中）と、残す日数。下の volumes で名前付きボリュームをマウントしている。
+      # stdio の標準エラーは docker logs に残らないため、stdio でだけ出る書き込みのツールの記録はここに残る
+      AUDIT_LOG_DIR: ${AUDIT_LOG_DIR:-/var/log/ollama-mcp}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-30}
 
     volumes:
-      # C:/dev は読み書き可能。OUTPUT_DIR への書き出しと、今後のリポジトリの取得に使う。
-      # サーバーが実際に書くのは OUTPUT_DIR の配下だけで、読み込みのツールは今までどおり書き換えない
-      - C:/dev:/work/dev
+      # C:/dev は読み取り専用にする。サーバーが書くのは CLONE_ROOT と OUTPUT_DIR の配下だけだが、
+      # それはコードの約束にすぎない。約束が外れたときに書き換えられる範囲を、この 2 つに絞る
+      - C:/dev:/work/dev:ro
+      # 書き込み先だけを、読み書きできる形で重ねる。コンテナーの側のパスは、CLONE_ROOT と OUTPUT_DIR の
+      # 「=」の右と同じにする。どちらかのホストの側を変えたときは、ここも合わせる。
+      # ホストにディレクトリが無ければ Docker が作る（OUTPUT_DIR を設定しないときも作られる）
+      - C:/dev/claude:/work/dev/claude
+      - C:/dev/ollama-out:/work/dev/ollama-out
       - C:/docker:/work/docker:ro
+      # 監査ログ。FILE_ROOTS の外に置き、ファイルのツールから読めないようにする。
+      # 読むときは docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl'
+      - audit-log:/var/log/ollama-mcp
 
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
@@ -77,3 +106,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  audit-log:

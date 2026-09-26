@@ -20,12 +20,11 @@ on:
         description: 'リリースする版。v は付けない'
         required: true
         type: string
-
-# release.yml から呼ばれるときは、呼び元が group: release を握っている。
-# 同じ名前にすると互いに待ち合って進まなくなるため、別の名前にする
-concurrency:
-  group: release-publish
-  cancel-in-progress: false
+      sha:
+        description: 'タグを打つコミット（マージコミット）。空なら main の先端を使う'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -44,6 +43,15 @@ jobs:
       (github.event.pull_request.merged == true &&
        (startsWith(github.event.pull_request.head.ref, 'release/') ||
         startsWith(github.event.pull_request.head.ref, 'hotfix/')))
+    # 公開は同時に1つだけ動かす。
+    # ワークフローの単位ではなくジョブの単位で指定する。ワークフローの単位だと、release/* や hotfix/* 以外の
+    # PR が main で閉じるたびに（ジョブは飛ばされても）実行が同じ枠に入る。GitHub は待っている実行を
+    # 新しい実行で置き換えるため、待っていた公開の実行が取り消される。
+    # release.yml から呼ばれるときは、呼び元が group: release を握っている。
+    # 同じ名前にすると互いに待ち合って進まなくなるため、別の名前にする
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     # セルフホストのランナーがあれば、リポジトリの変数 RUNS_ON にそのラベル（例: self-hosted）を設定する。
     # 無ければ GitHub がホストする ubuntu-latest で動く
     runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
@@ -62,11 +70,15 @@ jobs:
             exit 1
           fi
 
-      - name: mainを取得
+      - name: マージコミットを取得
+        # main の先端ではなく、マージしたコミットそのものを取る。
+        # マージが続くと main の先端は別のコミットになり、版もタグもそちらから取ってしまうためである。
+        # PR から動いたときは merge_commit_sha、release.yml から呼ばれたときは入力の sha を使う。
+        # どちらも無いときだけ main の先端を使う
         # zizmor: ignore[artipacked] このジョブはタグと develop を push するため、認証情報を残す
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.MAIN_BRANCH }}
+          ref: ${{ inputs.sha || github.event.pull_request.merge_commit_sha || env.MAIN_BRANCH }}
           # タグと develop を扱うため、履歴をすべて取る
           fetch-depth: 0
 
@@ -82,7 +94,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          # 実際の版は main の package.json から取る
+          # 実際の版は、取得したコミット（main へのマージコミット）の package.json から取る
           actual="$(node -p "require('./package.json').version")"
 
           # 期待する版は、呼び元の入力か、PR のブランチ名（release/vX.Y.Z）から取る。

@@ -245,52 +245,86 @@ fi
 
 # ---- 8. テンプレート由来の名前を書き換える
 info "テンプレート由来の名前を、このリポジトリのものに書き換える"
-changed=()
+setup_branch='feature/setup-repository'
+
+# 書き換えるファイルと置き換えの組を、先にすべて集める。ファイルはまだ変えない。
+# 置き換えても中身が変わらない組（from と to が同じ）は数えない。
+# 同じ文字列への置き換えを「変えた」と数えると、変更の無いコミットで止まるためである
+targets=()
+add_target() { # add_target <file> <from> <to>
+  if [ "$2" != "$3" ] && [ -f "$1" ] && grep -qF -- "$2" "$1"; then
+    targets+=("$1" "$2" "$3")
+  fi
+}
+
+# 書き換えのブランチが手元かリモートに残っているか。
+# リモートを確かめられなかったとき（ネットワークの失敗）は、無いものとして進み、push の段で止まる
+setup_branch_exists() {
+  git show-ref --verify --quiet "refs/heads/${setup_branch}" \
+    || git ls-remote --exit-code --heads origin "refs/heads/${setup_branch}" >/dev/null 2>&1
+}
+
 if ! command -v node >/dev/null 2>&1; then
   warn "node が見つからないため、名前の書き換えは飛ばした。Node 22 以上を入れて再実行する"
-elif [ -d .git ] && [ -f package.json ]; then
+elif [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != 'true' ] \
+  || [ -n "$(git rev-parse --show-cdup 2>/dev/null)" ] \
+  || [ ! -f package.json ]; then
+  # .git の有無ではなく git に尋ねる。git worktree の中では .git がファイルになるためである
+  warn "clone の最上位のディレクトリで実行していないため、名前の書き換えは飛ばした。clone の最上位で再実行する"
+elif [ -n "$(git status --porcelain)" ]; then
   # 作業木がきれいなことを確かめる。書き換えを他の変更と混ぜない
-  if [ -n "$(git status --porcelain)" ]; then
-    warn "作業木に未コミットの変更があるため、名前の書き換えは飛ばした。コミットしてから再実行する"
+  warn "作業木に未コミットの変更があるため、名前の書き換えは飛ばした。コミットしてから再実行する"
+else
+  if [ "$repo" != "$TEMPLATE_REPO" ]; then
+    add_target .github/CODEOWNERS "@${TEMPLATE_OWNER}" "@${owner}"
+    add_target .github/ISSUE_TEMPLATE/config.yml "$TEMPLATE_REPO" "$repo"
+    # npm のパッケージ名は小文字に限る
+    add_target package.json "\"name\": \"${TEMPLATE_PACKAGE_NAME}\"" "\"name\": \"$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')\""
+  fi
+
+  changed=()
+  for ((i = 0; i < ${#targets[@]}; i += 3)); do
+    changed+=("${targets[i]}")
+  done
+
+  if [ ${#changed[@]} -eq 0 ]; then
+    ok "書き換えるものは無い"
+  elif $open_pr && setup_branch_exists; then
+    # 前の実行の Pull Request をマージする前に実行し直したとき。
+    # ファイルを変える前に止め、作業木とブランチをそのままにする
+    warn "ブランチ ${setup_branch} がすでにあるため、名前の書き換えは飛ばした。前の実行の Pull Request をマージしてから再実行する。Pull Request が無いときは、ブランチを消してから再実行する（git branch -D ${setup_branch}、git push origin --delete ${setup_branch}）"
   else
-    rewrite() { # rewrite <file> <from> <to>
-      local file="$1" from="$2" to="$3"
-      if [ -f "$file" ] && grep -qF -- "$from" "$file"; then
-        if $dry_run; then
-          printf '  + %s: %s → %s\n' "$file" "$from" "$to"
-        else
-          node -e 'const fs = require("fs"); const [f, a, b] = process.argv.slice(1); fs.writeFileSync(f, fs.readFileSync(f, "utf8").split(a).join(b))' "$file" "$from" "$to"
-          changed+=("$file")
-        fi
-      fi
-    }
-    if [ "$repo" != "$TEMPLATE_REPO" ]; then
-      rewrite .github/CODEOWNERS "@${TEMPLATE_OWNER}" "@${owner}"
-      rewrite .github/ISSUE_TEMPLATE/config.yml "$TEMPLATE_REPO" "$repo"
-      # npm のパッケージ名は小文字に限る
-      rewrite package.json "\"name\": \"${TEMPLATE_PACKAGE_NAME}\"" "\"name\": \"$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')\""
-    fi
-    if [ ${#changed[@]} -eq 0 ]; then
-      ok "書き換えるものは無い"
-    elif $open_pr; then
-      branch="feature/setup-repository"
-      run git switch --create "$branch"
-      run git add "${changed[@]}"
-      run git commit --quiet --message "テンプレート由来の名前をこのリポジトリのものに書き換える"
-      run git push --set-upstream origin "$branch"
-      if run gh pr create --repo "$repo" --base "$DEVELOP_BRANCH" --head "$branch" \
-        --title "テンプレート由来の名前を書き換える" \
-        --body "scripts/setup.sh が CODEOWNERS、Issue の選択画面の URL、package.json の名前を書き換えました。"; then
-        ok "Pull Request を開いた。確かめてマージする"
+    for ((i = 0; i < ${#targets[@]}; i += 3)); do
+      if $dry_run; then
+        printf '  + %s: %s → %s\n' "${targets[i]}" "${targets[i + 1]}" "${targets[i + 2]}"
       else
-        warn "Pull Request を開けなかった。ブランチ ${branch} は push 済み"
+        node -e 'const fs = require("fs"); const [f, a, b] = process.argv.slice(1); fs.writeFileSync(f, fs.readFileSync(f, "utf8").split(a).join(b))' \
+          "${targets[i]}" "${targets[i + 1]}" "${targets[i + 2]}"
       fi
+    done
+
+    if ! $open_pr; then
+      if $dry_run; then
+        ok "書き換える（コミットはしない）: ${changed[*]}"
+      else
+        ok "書き換えた（コミットはしていない）: ${changed[*]}"
+      fi
+    # git の段は、失敗したらそこで止める。後の段へ進むと、別のブランチに書き換えが載ってしまう
+    elif ! run git switch --create "$setup_branch"; then
+      warn "ブランチ ${setup_branch} を作れなかった。書き換えは作業木に残っている: ${changed[*]}"
+    elif ! run git add -- "${changed[@]}" \
+      || ! run git commit --quiet --message "テンプレート由来の名前をこのリポジトリのものに書き換える"; then
+      warn "書き換えをコミットできなかった。ブランチ ${setup_branch} に切り替わったまま、書き換えは作業木に残っている"
+    elif ! run git push --set-upstream origin "$setup_branch"; then
+      warn "ブランチ ${setup_branch} を push できなかった。コミットは手元にある。git push --set-upstream origin ${setup_branch} を実行してから Pull Request を開く"
+    elif run gh pr create --repo "$repo" --base "$DEVELOP_BRANCH" --head "$setup_branch" \
+      --title "テンプレート由来の名前を書き換える" \
+      --body "scripts/setup.sh が CODEOWNERS、Issue の選択画面の URL、package.json の名前を書き換えました。"; then
+      ok "Pull Request を開いた。確かめてマージする"
     else
-      ok "書き換えた（コミットはしていない）: ${changed[*]}"
+      warn "Pull Request を開けなかった。ブランチ ${setup_branch} は push 済み"
     fi
   fi
-else
-  warn "リポジトリの中で実行していないため、名前の書き換えは飛ばした。clone の中で再実行する"
 fi
 
 # ---- まとめ

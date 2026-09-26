@@ -67,7 +67,12 @@ export async function initOutput({
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
-    warn(`[output] OUTPUT_DIR is not writable, saving is disabled: ${reason}`);
+    // docker-compose.yml は C:/dev を読み取り専用でマウントし、書き込み先だけを読み書きできる形で重ねている。
+    // 別の場所を指したときに、何を直せばよいかが分かるようにする
+    warn(
+      `[output] OUTPUT_DIR is not writable, saving is disabled: ${reason}. ` +
+        "In Docker, mount it read-write under volumes in docker-compose.yml.",
+    );
 
     return false;
   }

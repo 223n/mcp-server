@@ -19,6 +19,9 @@ export type AccessPayload = {
   nbf?: number;
   email?: string;
   sub?: string;
+
+  /** サービストークンのクライアント ID。サービストークンの JWT は email を持たず、sub も空になる */
+  common_name?: string;
 };
 
 type JwtHeader = { alg?: string; kid?: string };
@@ -27,11 +30,26 @@ const JWKS_TTL_MS = 60 * 60 * 1000;
 
 const JWKS_MIN_REFRESH_MS = 60 * 1000;
 
+// 取得に失敗したあと、取り直さずに待つ時間
+const JWKS_FAILURE_BACKOFF_MS = 30 * 1000;
+
 let jwks: { keys: Map<string, KeyObject>; fetchedAt: number } = {
   keys: new Map(),
   fetchedAt: 0,
 };
 
+// 進行中の取得。同時に来た呼び出しは、これを分け合う
+let inflight: Promise<Map<string, KeyObject>> | undefined;
+
+let lastFailureAt = 0;
+
+/**
+ * Cloudflare Access の公開鍵を返す。
+ *
+ * 鍵は署名を確かめる前に探すため、知らない kid の偽の JWT でも取り直しが走る。
+ * 同時に届いた分は 1 回の取得を分け合い、失敗した直後はしばらく取り直さない。
+ * 取り直しに失敗しても、手元に鍵があればそれを使い続ける
+ */
 async function loadKeys({ force = false }: { force?: boolean } = {}): Promise<Map<string, KeyObject>> {
   const age = Date.now() - jwks.fetchedAt;
 
@@ -39,6 +57,39 @@ async function loadKeys({ force = false }: { force?: boolean } = {}): Promise<Ma
     return jwks.keys;
   }
 
+  if (Date.now() - lastFailureAt < JWKS_FAILURE_BACKOFF_MS) {
+    if (jwks.keys.size > 0) {
+      return jwks.keys;
+    }
+
+    throw new Error("Cloudflare Access certs are unavailable; not retrying yet");
+  }
+
+  inflight ??= fetchKeys()
+    .then(
+      (keys) => {
+        jwks = { keys, fetchedAt: Date.now() };
+
+        return keys;
+      },
+      (error: unknown) => {
+        lastFailureAt = Date.now();
+
+        if (jwks.keys.size > 0) {
+          return jwks.keys;
+        }
+
+        throw error;
+      },
+    )
+    .finally(() => {
+      inflight = undefined;
+    });
+
+  return await inflight;
+}
+
+async function fetchKeys(): Promise<Map<string, KeyObject>> {
   const response = await fetch(`https://${config.cfAccessTeamDomain}/cdn-cgi/access/certs`, {
     signal: AbortSignal.timeout(5000),
   });
@@ -49,20 +100,28 @@ async function loadKeys({ force = false }: { force?: boolean } = {}): Promise<Ma
 
   const { keys = [] } = (await response.json()) as { keys?: (webcrypto.JsonWebKey & { kid?: string })[] };
 
-  jwks = {
-    keys: new Map(
-      keys
-        .filter((jwk) => typeof jwk.kid === "string")
-        .map((jwk): [string, KeyObject] => [
-          jwk.kid as string,
-          createPublicKey({ key: jwk, format: "jwk" }),
-        ]),
-    ),
+  return new Map(
+    keys
+      .filter((jwk) => typeof jwk.kid === "string")
+      .map((jwk): [string, KeyObject] => [jwk.kid as string, createPublicKey({ key: jwk, format: "jwk" })]),
+  );
+}
 
-    fetchedAt: Date.now(),
-  };
+/**
+ * 監査に残す識別子。
+ * 人は email、サービストークンは common_name（クライアント ID）で見分ける。
+ * サービストークンの sub は空の文字列のため、sub だけではどれも同じ "sub:" になる
+ */
+export function accessIdentity(payload: AccessPayload): string {
+  if (payload.email) {
+    return payload.email;
+  }
 
-  return jwks.keys;
+  if (payload.common_name) {
+    return `service:${payload.common_name}`;
+  }
+
+  return `sub:${payload.sub || "unknown"}`;
 }
 
 const decode = <T>(part: string): T =>
@@ -174,8 +233,7 @@ export function createAuthMiddleware(): RequestHandler | null {
         const payload = await verifyAccessJwt(assertion);
 
         if (payload && isAllowedIdentity(payload)) {
-          // 監査に残す識別子。email が無いサービストークンは sub で見分ける
-          req.mcpIdentity = payload.email ?? `sub:${payload.sub ?? "unknown"}`;
+          req.mcpIdentity = accessIdentity(payload);
 
           return next();
         }

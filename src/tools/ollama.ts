@@ -9,6 +9,8 @@ import type {
   ToolResult,
 } from "../types.ts";
 
+import { recordUsage } from "../audit.ts";
+
 import { config } from "../config/config.ts";
 
 import { getSystemPrompt } from "../config/prompts.ts";
@@ -19,7 +21,7 @@ import { ollamaChat, ollamaRequest } from "../ollama/client.ts";
 
 import { createLimiter } from "../ollama/limiter.ts";
 
-import { buildFileContext } from "./files.ts";
+import { buildFileContext, DEFAULT_PROMPT_BUDGET } from "./files.ts";
 
 import { degenerationWarning, preview, saveOutput } from "./output.ts";
 
@@ -72,6 +74,21 @@ function metaLine(result: ChatResult): string {
   return `[ollama] ${meta} ${note}`;
 }
 
+// OLLAMA_NUM_CTX を設定していないときに見込むコンテキスト長。実際の長さは Ollama の設定で決まり、サーバーからは見えない
+const ASSUMED_CONTEXT = 32768;
+
+// 渡すファイル以外（利用者の指示、system プロンプト、チャットの書式）に残しておく量
+const CONTEXT_MARGIN = 2048;
+
+/** 渡すファイルに使ってよい量。OLLAMA_NUM_CTX を設定したときは、そこから出力の分と余白を引く */
+export function inputBudget(maxTokens: number | undefined): number {
+  if (!config.ollamaNumCtx) {
+    return DEFAULT_PROMPT_BUDGET;
+  }
+
+  return Math.max(1000, config.ollamaNumCtx - (maxTokens ?? 4096) - CONTEXT_MARGIN);
+}
+
 function warningsFor(result: ChatResult): string[] {
   const warnings: string[] = [];
 
@@ -83,9 +100,17 @@ function warningsFor(result: ChatResult): string[] {
     warnings.push("WARNING: output was cut off by max_tokens; the answer is incomplete.");
   }
 
-  if ((result.promptTokens ?? 0) > 30000) {
+  // 上限に張り付いたら、Ollama が入力の一部を黙って落とした疑いがある。
+  // prompt_eval_count はキャッシュから使い回した先頭部分を数えないため、少ないほうには判断に使わない
+  const limit = config.ollamaNumCtx || ASSUMED_CONTEXT;
+
+  if ((result.promptTokens ?? 0) >= limit * 0.9) {
+    const source = config.ollamaNumCtx
+      ? "OLLAMA_NUM_CTX"
+      : "assumed; the real limit is set in Ollama, and OLLAMA_NUM_CTX makes it explicit";
+
     warnings.push(
-      "WARNING: the prompt is close to the 32k context limit; earlier input may have been dropped.",
+      `WARNING: the prompt used ${result.promptTokens} of about ${limit} context tokens (${source}); earlier input may have been dropped.`,
     );
   }
 
@@ -102,6 +127,39 @@ const limiter = createLimiter({
 
 export function limiterStats() {
   return limiter.stats();
+}
+
+/** "fast" と "deep" を、設定したモデルの名前に読み替える。PC ごとのモデルの名前を Claude に覚えさせない */
+export function resolveModel(model: string | undefined): string | undefined {
+  if (model === "fast") {
+    return config.defaultModel;
+  }
+
+  if (model === "deep") {
+    return config.deepModel;
+  }
+
+  return model;
+}
+
+// 入っていないモデルを指定されると、Ollama は 404 と「model "x" not found」を返す。
+// どのモデルなら使えるかを添えて、次の呼び出しで直せるようにする。一覧を取れなければ元のエラーのまま返す
+async function explainMissingModel(error: unknown, signal?: AbortSignal): Promise<unknown> {
+  if (!(error instanceof Error) || !/HTTP 404/.test(error.message) || !/not found/i.test(error.message)) {
+    return error;
+  }
+
+  try {
+    const tags = await ollamaRequest<OllamaTags>("/api/tags", undefined, { signal });
+
+    const names = (tags.models ?? []).map((m) => m.name).filter(Boolean);
+
+    return new Error(
+      `${error.message}. Installed models: ${names.join(", ") || "(none)"}. Aliases: "fast" = ${config.defaultModel}, "deep" = ${config.deepModel}.`,
+    );
+  } catch {
+    return error;
+  }
 }
 
 function formatResult(result: ChatResult, notes: string[] = []): string {
@@ -166,15 +224,30 @@ export type ChatToolArgs = {
 
 // 各ツール共通の実行処理
 export async function runChat(
-  { model, system, prompt, files, inlineFiles, lineNumbers, temperature, maxTokens, save, outputName }: ChatRequest,
+  {
+    model,
+    system,
+    prompt,
+    files,
+    inlineFiles,
+    sections,
+    sectionNotes = [],
+    lineNumbers,
+    temperature,
+    maxTokens,
+    save,
+    outputName,
+  }: ChatRequest,
   ctx?: ToolContext,
 ): Promise<ToolResult> {
   const signal = ctx?.mcpReq?.signal;
 
-  const context =
-    files?.length || inlineFiles?.length
-      ? await buildFileContext({ files, inlineFiles, lineNumbers, signal })
+  const built =
+    files?.length || inlineFiles?.length || sections?.length
+      ? await buildFileContext({ files, inlineFiles, sections, lineNumbers, budget: inputBudget(maxTokens), signal })
       : ({ block: "", notes: [] } satisfies FileContext);
+
+  const context = { block: built.block, notes: [...sectionNotes, ...built.notes] };
 
   // 落としたファイルがあることはモデルにも伝える。
   // 伝えないと、渡していないファイルまで見たつもりで「指摘なし」と答えてしまう
@@ -182,10 +255,14 @@ export async function runChat(
 
   const report = progressReporter(ctx);
 
+  const modelName = resolveModel(model) ?? config.defaultModel;
+
+  const requested = Date.now();
+
   const result = await limiter.run(
     () =>
       ollamaChat({
-        model: model ?? config.defaultModel,
+        model: modelName,
 
         messages: [
           ...(system ? [{ role: "system", content: system } satisfies ChatMessage] : []),
@@ -197,6 +274,8 @@ export async function runChat(
           temperature: temperature ?? 0.7,
 
           ...(maxTokens ? { num_predict: maxTokens } : {}),
+
+          ...(config.ollamaNumCtx ? { num_ctx: config.ollamaNumCtx } : {}),
         },
 
         signal,
@@ -211,7 +290,22 @@ export async function runChat(
       onWait: ({ active, queued }) =>
         report?.({ chunks: 0, elapsedMs: 0, queued, active }),
     },
-  );
+  ).catch(async (error: unknown) => {
+    throw await explainMissingModel(error, signal);
+  });
+
+  // 任せた量を監査の 1 行とプロセスの合計に残す。枠を待った時間は、全体から生成の時間を引いて求める
+  recordUsage({
+    model: result.model,
+
+    prompt_tokens: result.promptTokens,
+
+    output_tokens: result.outputTokens,
+
+    done_reason: result.doneReason,
+
+    queued_ms: Math.max(0, Date.now() - requested - result.elapsedMs),
+  });
 
   if (save) {
     return await saveAndSummarise(result, context.notes, { outputName });

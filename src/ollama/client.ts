@@ -31,7 +31,29 @@ export type OllamaTags = {
   }[];
 };
 
+/** /api/ps の応答。いま読み込まれているモデル。context_length は Ollama の版によっては無い */
+export type OllamaPs = {
+  models?: {
+    name?: string;
+    size_vram?: number;
+    context_length?: number;
+    expires_at?: string;
+  }[];
+};
+
 const seconds = (ms: number): number => Math.round(ms / 1000);
+
+// 状態の確認（/api/version、/api/tags）の上限。生成と違って数秒で返るものなので、
+// OLLAMA_TIMEOUT（既定 300 秒）をそのまま使うと、Ollama が固まったときに ollama_health が 300 秒待つ
+const STATUS_TIMEOUT_MS = 15000;
+
+/** 状態の確認に使う上限。OLLAMA_TIMEOUT を短くしているときは、そちらに合わせる */
+export function statusTimeoutMs(): number {
+  return Math.min(config.ollamaTimeout, STATUS_TIMEOUT_MS);
+}
+
+/** 打ち切ったときの案内に出す、上限の名前 */
+type DeadlineLabels = { idle: string; max: string };
 
 // 無通信タイムアウト（データが届くたびに延長）と、全体の上限をまとめて扱う
 class Deadline {
@@ -40,6 +62,10 @@ class Deadline {
 
   readonly idleMs: number;
 
+  readonly maxMs: number;
+
+  readonly labels: DeadlineLabels;
+
   readonly maxTimer: ReturnType<typeof setTimeout>;
 
   idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -47,10 +73,14 @@ class Deadline {
   /** どちらの上限で打ち切ったか。まだ打ち切っていなければ undefined */
   reason: "idle" | "max" | undefined;
 
-  constructor(idleMs: number, maxMs: number) {
+  constructor(idleMs: number, maxMs: number, labels: DeadlineLabels) {
     this.controller = new AbortController();
 
     this.idleMs = idleMs;
+
+    this.maxMs = maxMs;
+
+    this.labels = labels;
 
     this.maxTimer = setTimeout(() => this.fire("max"), maxMs);
 
@@ -81,10 +111,12 @@ class Deadline {
     clearTimeout(this.maxTimer);
   }
 
+  // 案内には、この Deadline が実際に使った値を出す。設定の値を読み直すと、
+  // 状態の確認のように別の上限で打ち切ったときに、効いていない設定の名前と値を出してしまう
   describe(path: string): string {
     return this.reason === "idle"
-      ? `Ollama ${path} sent nothing for ${seconds(config.ollamaTimeout)} s (OLLAMA_TIMEOUT)`
-      : `Ollama ${path} did not finish within ${seconds(config.ollamaMaxDuration)} s (OLLAMA_MAX_DURATION)`;
+      ? `Ollama ${path} sent nothing for ${seconds(this.idleMs)} s (${this.labels.idle})`
+      : `Ollama ${path} did not finish within ${seconds(this.maxMs)} s (${this.labels.max})`;
   }
 }
 
@@ -163,7 +195,12 @@ export async function ollamaRequest<T>(
   body?: unknown,
   { signal }: { signal?: AbortSignal } = {},
 ): Promise<T> {
-  const deadline = new Deadline(config.ollamaTimeout, config.ollamaTimeout);
+  // 状態の確認は、無通信と全体を同じ短い上限で見る
+  const limit = statusTimeoutMs();
+
+  const label = `OLLAMA_TIMEOUT, at most ${seconds(STATUS_TIMEOUT_MS)} s for status requests`;
+
+  const deadline = new Deadline(limit, limit, { idle: label, max: label });
 
   try {
     const response = await open(path, body, signal, deadline);
@@ -194,7 +231,11 @@ export async function ollamaChat({
 }): Promise<ChatResult> {
   const started = Date.now();
 
-  const deadline = new Deadline(config.ollamaTimeout, config.ollamaMaxDuration);
+  const deadline = new Deadline(config.ollamaTimeout, config.ollamaMaxDuration, {
+    idle: "OLLAMA_TIMEOUT",
+
+    max: "OLLAMA_MAX_DURATION",
+  });
 
   let chunks = 0;
 

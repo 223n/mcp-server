@@ -1,12 +1,24 @@
 import { mkdir, realpath, rm, stat } from "node:fs/promises";
 
-import type { GitEnv } from "../git/exec.ts";
+import type { GitConfigEntry, GitEnv } from "../git/exec.ts";
 
 import type { Reporter, ToolContext } from "../types.ts";
 
 import { config } from "../config/config.ts";
 
-import { checkValue, credentialEnv, git, runGit, scrub } from "../git/exec.ts";
+import {
+  checkValue,
+  credentialConfig,
+  git,
+  runGit,
+  scrub,
+  splitTruncation,
+  truncationNote,
+} from "../git/exec.ts";
+
+import { excludeSensitiveSections, exclusionNote, isSensitivePath } from "./sensitive.ts";
+
+import { thirdParty } from "./third-party.ts";
 
 /** "owner/repo" を分解し、取得先のディレクトリまで決めたもの */
 type RepoTarget = { owner: string; repo: string; slug: string; dir: string };
@@ -47,29 +59,24 @@ const RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 // 直に push させないブランチ。CLAUDE.md が main と develop を守るよう定めている
 const PROTECTED_BRANCHES = /^(main|master|develop)$/i;
 
-// git は files.ts の拒否リストを通らない 2 つめの読み取り口になる。
-// diff に秘密のファイルが載らないよう、pathspec で機械的に外す
-const SENSITIVE_PATHSPECS = [
-  ":(exclude,glob)**/.env",
-  ":(exclude,glob)**/.env.*",
-  ":(exclude,glob).env",
-  ":(exclude,glob).env.*",
-  ":(exclude,glob)**/*.pem",
-  ":(exclude,glob)**/*.key",
-  ":(exclude,glob)**/*.p12",
-  ":(exclude,glob)**/*.pfx",
-  ":(exclude,glob)**/*.tfstate",
-  ":(exclude,glob)**/*.tfvars",
-  ":(exclude,glob)**/id_rsa*",
-  ":(exclude,glob)**/id_ed25519*",
-  ":(exclude,glob)**/.npmrc",
-  ":(exclude,glob)**/.netrc",
-  ":(exclude,glob)**/app_local.php",
-  ":(exclude,glob)**/wp-config.php",
-  ":(exclude,glob)**/credentials*",
-  ":(exclude,glob)**/secrets/**",
-  ":(exclude,glob)**/.dev.vars",
+// 取得したリポジトリの .git/config に置いてよい鍵。git clone と push --set-upstream が書くものと、
+// 取得したあとに手で足されやすい user.* だけを許す。
+//
+// GIT_CONFIG_SYSTEM と GIT_CONFIG_GLOBAL を差し替えても、local の設定は読まれる。
+// core.fsmonitor、core.hooksPath、core.worktree、diff.external、filter.<名前>.clean、credential.helper、
+// url.<先>.insteadOf、http.<URL>.proxy、include.path は、どれも git にコマンドを実行させるか、
+// 触る場所や通信先を変える。名前を列挙しきれないため、拒否リストではなく許可リストにする。
+// 鍵は小文字で届く（branch.<名前> の <名前> だけは大文字と小文字をそのまま保つ）
+const LOCAL_CONFIG_KEYS = [
+  /^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|symlinks|precomposeunicode)$/,
+  /^extensions\.(objectformat|refstorage)$/,
+  /^remote\.origin\.(url|fetch|tagopt)$/,
+  /^branch\..+\.(remote|merge)$/,
+  /^user\.(name|email)$/,
 ];
+
+// エラーに並べる鍵の数の上限
+const MAX_LISTED_KEYS = 10;
 
 export function cloneLabel(): string {
   return config.cloneRoot?.hostLabel ?? "";
@@ -118,7 +125,11 @@ export async function initClone({ warn = console.error }: Reporter = {}): Promis
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
-    warn(`[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}`);
+    // docker-compose.yml は C:/dev を読み取り専用でマウントし、書き込み先だけを読み書きできる形で重ねている
+    warn(
+      `[git] CLONE_ROOT is not writable, the git tools are disabled: ${reason}. ` +
+        "In Docker, mount it read-write under volumes in docker-compose.yml.",
+    );
 
     return false;
   }
@@ -183,7 +194,62 @@ function repoPath(input: unknown): RepoTarget {
   return { ...parsed, dir: `${ready.real}/${parsed.owner}/${parsed.repo}` };
 }
 
-async function requireClone(input: unknown): Promise<RepoTarget> {
+function originUrl(target: RepoTarget): string {
+  return `https://github.com/${target.owner}/${target.repo}.git`;
+}
+
+/**
+ * 取得したリポジトリの .git/config に、許可リストにない鍵が無いかを確かめる。
+ *
+ * .git/config はリモートから配られないため、git clone しただけでは危険な鍵は入らない。
+ * 入れられるのは、CLONE_ROOT（ホストのディレクトリ）に書けるホストの側のプロセスで、
+ * そこから GITHUB_MCP_TOKEN を持つこのコンテナーの中でコマンドを動かす経路を塞ぐ。
+ * 読むだけの `git config` はコマンドを実行しないため、確かめる前に危険な鍵が効くことはない
+ */
+async function verifyLocalConfig(target: RepoTarget, signal?: AbortSignal): Promise<void> {
+  // --null: 鍵と値を改行で、項目を NUL で区切る。値に改行があっても取り違えない。
+  // --no-includes: include.path の先は読まず、include.path という鍵そのものを許可リストで拒む
+  const listed = await git(["-C", target.dir, "config", "--local", "--no-includes", "--null", "--list"], {
+    signal,
+  });
+
+  const unexpected: string[] = [];
+
+  for (const entry of listed.split("\0")) {
+    if (!entry) {
+      continue;
+    }
+
+    const newline = entry.indexOf("\n");
+
+    const key = newline >= 0 ? entry.slice(0, newline) : entry;
+
+    const value = newline >= 0 ? entry.slice(newline + 1) : "";
+
+    const allowed =
+      LOCAL_CONFIG_KEYS.some((pattern) => pattern.test(key)) &&
+      // 取得先を別のホストや別のリポジトリに向け直させない
+      (key !== "remote.origin.url" || value.toLowerCase() === originUrl(target).toLowerCase());
+
+    if (!allowed && !unexpected.includes(key)) {
+      unexpected.push(key);
+    }
+  }
+
+  if (unexpected.length > 0) {
+    const listedKeys = unexpected.slice(0, MAX_LISTED_KEYS).join(", ");
+
+    const more = unexpected.length > MAX_LISTED_KEYS ? ` and ${unexpected.length - MAX_LISTED_KEYS} more` : "";
+
+    throw new Error(
+      `Refusing to run git in ${target.slug}: its .git/config has settings this server does not allow (${listedKeys}${more}). ` +
+        "Such settings can make git run commands or talk to other hosts. " +
+        `Remove them with \`git config --local --unset <key>\` on the host, or delete ${hostPathFor(target)} and clone it again.`,
+    );
+  }
+}
+
+async function requireClone(input: unknown, signal?: AbortSignal): Promise<RepoTarget> {
   const target = repoPath(input);
 
   const info = await stat(`${target.dir}/.git`).catch(() => null);
@@ -191,6 +257,13 @@ async function requireClone(input: unknown): Promise<RepoTarget> {
   if (!info) {
     throw new Error(`${target.slug} has not been cloned yet. Call git_clone first.`);
   }
+
+  // .git がファイル（gitdir: で別の場所を指すもの）だと、CLONE_ROOT の外のリポジトリを触ることになる
+  if (!info.isDirectory()) {
+    throw new Error(`Refusing to run git in ${target.slug}: .git is not a directory`);
+  }
+
+  await verifyLocalConfig(target, signal);
 
   return target;
 }
@@ -247,7 +320,7 @@ export async function gitClone(args: GitCloneArgs, ctx?: ToolContext): Promise<s
     await git(argv, {
       cwd: root.real,
 
-      env: credentialEnv(),
+      config: credentialConfig(),
 
       signal: ctx?.mcpReq?.signal,
 
@@ -328,14 +401,100 @@ function progressFor(
   };
 }
 
+// "--cached" のようなオプションは値として拒むため、真偽値の引数で受ける
+function diffRunner(
+  run: (argv: string[]) => Promise<string>,
+  { ref, staged }: { ref?: string; staged?: boolean },
+): (options: string[], pathspecs?: string[]) => Promise<string> {
+  return (options, pathspecs = []) =>
+    run([
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      ...(staged ? ["--cached"] : []),
+      ...options,
+      ...(ref ? [checkValue(ref, "ref")] : []),
+      "--",
+      ".",
+      ...pathspecs,
+    ]);
+}
+
+// 差分の本文を読み、秘密のファイルの区画を落とす。
+// 切り詰めの但し書きは、落とす区画と一緒に消えないよう、先に外してから notes に戻す
+async function readPatch(
+  diff: (options: string[]) => Promise<string>,
+): Promise<{ text: string; notes: string[] }> {
+  const { body, truncated } = splitTruncation(await diff([]));
+
+  const { text, excluded } = excludeSensitiveSections(body);
+
+  return { text, notes: [truncated ? truncationNote() : "", exclusionNote(excluded)].filter(Boolean) };
+}
+
+/** ollama_review_code の git_diff。src/tools/index.ts の inputSchema と対で保つこと */
+export type GitDiffSource = {
+  repo: string;
+  ref?: string;
+  staged?: boolean;
+};
+
+/**
+ * 取得したリポジトリの差分を、Claude に返さずにローカルのモデルへ渡すために読む。
+ * 防御は git_read の diff とまったく同じ経路（requireClone、checkValue、秘密のファイルの除外）を通す
+ */
+export async function readCloneDiff(
+  source: GitDiffSource,
+  signal?: AbortSignal,
+): Promise<{ text: string; notes: string[] }> {
+  const target = await requireClone(source.repo, signal);
+
+  const run = (argv: string[]) => git(["-C", target.dir, ...argv], { signal });
+
+  return await readPatch(diffRunner(run, source));
+}
+
+/**
+ * 差分を読み、秘密のファイルの区画を落とす。
+ *
+ * 判定は files.ts と同じ isSensitivePath を使う。pathspec の一覧を別に持つと、
+ * files では読めない秘密が diff からは読める、という抜け道になるため。
+ * --no-ext-diff と --no-textconv は、.git/config の diff.external と diff.<名前>.textconv を効かせないため
+ */
+async function readDiff(
+  run: (argv: string[]) => Promise<string>,
+  { ref, staged, stat_only: statOnly }: GitReadArgs,
+): Promise<string> {
+  const diff = diffRunner(run, { ref, staged });
+
+  if (!statOnly) {
+    const { text, notes } = await readPatch(diff);
+
+    return [text, ...notes].join("\n");
+  }
+
+  // 要約（--stat）は区画に分かれないため、先に変わったパスを読み、当たるものを名前で外す。
+  // 名前の変更は元と先の 2 件に分け、どちらの名前も確かめる
+  const names = await diff(["--name-only", "-z", "--no-renames"]);
+
+  const excluded = names.split("\0").filter((name) => name !== "" && isSensitivePath(name));
+
+  const stat = await diff(
+    ["--stat"],
+    excluded.map((name) => `:(exclude,literal)${name}`),
+  );
+
+  return [stat, exclusionNote(excluded)].filter(Boolean).join("\n");
+}
+
 /**
  * 取得したリポジトリを読む。
  * サブコマンドとオプションは op ごとに決め打ちし、利用者の値は値の位置にしか入らない。
  */
 export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<string> {
-  const target = await requireClone(args.repo);
-
   const signal = ctx?.mcpReq?.signal;
+
+  const target = await requireClone(args.repo, signal);
 
   const run = (argv: string[]) => git(["-C", target.dir, ...argv], { signal });
 
@@ -343,36 +502,30 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
     case "status":
       return await run(["status", "--short", "--branch"]);
 
+    // log、diff、show はコミットのメッセージや他人の書いたコードを返すため、断り書きを添える
     case "log":
-      return await run([
+      return thirdParty(await run([
         "log",
         `--max-count=${Math.min(args.limit ?? 20, 200)}`,
         "--date=iso",
         "--pretty=format:%h %ad %an %s",
         ...(args.ref ? [checkValue(args.ref, "ref")] : []),
-      ]);
+      ]));
 
     case "diff":
-      // "--cached" のようなオプションは値として拒むため、真偽値の引数で受ける
-      return await run([
-        "diff",
-        ...(args.staged ? ["--cached"] : []),
-        ...(args.stat_only ? ["--stat"] : []),
-        ...(args.ref ? [checkValue(args.ref, "ref")] : []),
-        "--",
-        ".",
-        ...SENSITIVE_PATHSPECS,
-      ]);
+      return thirdParty(await readDiff(run, args));
 
     case "show":
       // 中身は返さない。git show <ref>:<path> は files.ts の拒否リストを通らないため
-      return await run([
+      return thirdParty(await run([
         "show",
+        "--no-ext-diff",
+        "--no-textconv",
         "--stat",
         "--pretty=format:%h %ad %an%n%n%s%n%n%b",
         "--date=iso",
         checkValue(args.ref ?? "HEAD", "ref"),
-      ]);
+      ]));
 
     case "branches":
       return await run(["branch", "--all", "--format=%(refname:short) %(objectname:short)"]);
@@ -390,16 +543,17 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
  * GIT_ALLOW_WRITE を立てたときだけ、しかも stdio でだけ登録される。
  */
 export async function gitWrite(args: GitWriteArgs, ctx?: ToolContext): Promise<string> {
-  const target = await requireClone(args.repo);
-
   const signal = ctx?.mcpReq?.signal;
 
-  const run = (argv: string[], env?: GitEnv) => git(["-C", target.dir, ...argv], { signal, env });
+  const target = await requireClone(args.repo, signal);
+
+  const run = (argv: string[], env?: GitEnv, extraConfig?: GitConfigEntry[]) =>
+    git(["-C", target.dir, ...argv], { signal, env, config: extraConfig });
 
   switch (args.op) {
     case "fetch":
       return (
-        (await run(["fetch", "--no-tags", "--prune", "origin"], credentialEnv())) ||
+        (await run(["fetch", "--no-tags", "--prune", "origin"], undefined, credentialConfig())) ||
         `Fetched origin for ${target.slug}`
       );
 
@@ -477,7 +631,7 @@ export async function gitWrite(args: GitWriteArgs, ctx?: ToolContext): Promise<s
 
       const result = await runGit(
         ["-C", target.dir, "push", "--set-upstream", "origin", branch],
-        { signal, env: credentialEnv(), onProgress: progressFor(ctx, `Pushing ${branch}`) },
+        { signal, config: credentialConfig(), onProgress: progressFor(ctx, `Pushing ${branch}`) },
       );
 
       if (result.code !== 0) {

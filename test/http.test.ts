@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 
+import { request } from "node:http";
+
 import { tmpdir } from "node:os";
 
 import path from "node:path";
@@ -146,6 +148,96 @@ describe("認証なしの HTTP", () => {
     }
   });
 
+  test("モデルの説明は設定から組み立て、特定のモデルの名前を決め打ちしない", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const { tools } = await client.listTools();
+
+      const described = JSON.stringify(tools);
+
+      assert.doesNotMatch(described, /nucbox/);
+
+      // DEFAULT_MODEL は mock:latest、DEEP_MODEL は既定の qwen2.5-coder:14b
+      assert.match(described, /\\"fast\\" = mock:latest/);
+
+      assert.match(described, /\\"deep\\" = qwen2\.5-coder:14b/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("fast と deep の別名を、設定したモデルに読み替える", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const deep = await client.callTool({ name: "ollama_chat", arguments: { prompt: "hello", model: "deep" } });
+
+      assert.ok(!deep.isError, text(deep));
+
+      assert.equal(ollama.state.chats.at(-1)?.model, "qwen2.5-coder:14b");
+
+      await client.callTool({ name: "ollama_review_code", arguments: { code: "x = 1", model: "fast" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.model, "mock:latest");
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("ollama_health に、このプロセスで任せた量の合計を出す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      // それまでの試験で、既定のモデル（mock:latest）と deep（qwen2.5-coder:14b）に任せている
+      assert.match(health, /by model: .*mock:latest: \d+ calls, \d+ prompt \+ \d+ output tokens/);
+
+      assert.match(health, /qwen2\.5-coder:14b: \d+ calls/);
+
+      assert.match(health, /by identity: anonymous: \d+ calls/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("OLLAMA_NUM_CTX を設定しなければ num_ctx を送らず、見込みの 32768 で上限を警告する", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_FULL_CONTEXT" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.options?.num_ctx, undefined);
+
+      assert.match(text(result), /WARNING: the prompt used 32768 of about 32768 context tokens \(assumed/);
+
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      assert.match(health, /context: not sent/);
+
+      assert.match(health, /loaded models: mock:latest \(1\.0 GB VRAM, context 8192, until /);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("入っていないモデルを指定されたら、入っているモデルの一覧を添えて返す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "hello", model: "missing:model" } });
+
+      assert.equal(result.isError, true);
+
+      assert.match(text(result), /not found/);
+
+      assert.match(text(result), /Installed models: mock:latest/);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("クライアントが中断すると Ollama への呼び出しも止まる", async () => {
     const client = await connect(server.url);
 
@@ -190,8 +282,8 @@ describe("認証なしの HTTP", () => {
     assert.match(await unknownMethod.text(), /-32601/);
   });
 
-  test("既定では 3060 秒までのリクエストを受け付ける", async () => {
-    assert.match(server.output(), /\[http\] request timeout: 3060 s/);
+  test("既定では、要求を受け取り終えるまでを 60 秒で打ち切る", async () => {
+    assert.match(server.output(), /\[http\] request timeout: 60 s/);
   });
 
   test("許可していない Host と Origin は 403", async () => {
@@ -248,6 +340,49 @@ describe("トークンで認証する HTTP（ファイルの読み込みあり�
     const response = await post(server.url, { body: INITIALIZE });
 
     assert.equal(response.status, 401);
+  });
+
+  test("トークンがなければ、本文を読み終える前に 401 を返す", async () => {
+    // 本文の長さだけを大きく名乗り、中身は送らない。
+    // 認証より先に本文を解析すると、送り終えるまで（requestTimeout まで）応答が返らない
+    const status = await new Promise<number>((resolve, reject) => {
+      const { hostname, port } = new URL(server.url);
+
+      const req = request(
+        {
+          hostname,
+          port,
+          path: "/mcp",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": "1000000" },
+        },
+        (res) => {
+          res.resume();
+
+          resolve(res.statusCode ?? 0);
+
+          req.destroy();
+        },
+      );
+
+      req.on("error", (error) => {
+        // 応答を受け取ったあとで接続を切ったときの失敗は無視する
+        if (!req.destroyed) {
+          reject(error);
+        }
+      });
+
+      req.setTimeout(5000, () => reject(new Error("no response before the body was sent")));
+
+      req.write('{"jsonrpc":');
+    });
+
+    assert.equal(status, 401);
+
+    // 壊れた JSON も、認証の無い相手には解析の結果（400）ではなく 401 を返す
+    const broken = await post(server.url, { body: '{"jsonrpc":' });
+
+    assert.equal(broken.status, 401);
   });
 
   test("トークンがあれば、ファイルのツールを使える", async () => {
@@ -563,12 +698,6 @@ describe("タイムアウト", () => {
     await ollama.close();
   });
 
-  test("Node の既定より長いリクエストを切らないようにしている", async () => {
-    // Node の requestTimeout は既定で 300 秒。これを上げないと、
-    // OLLAMA_MAX_DURATION をいくら大きくしても 300 秒で 408 になる
-    assert.match(server.output(), /\[http\] request timeout: 61 s/);
-  });
-
   test("途中まで生成された部分を警告付きで返す", async () => {
     const client = await connect(server.url);
 
@@ -591,6 +720,135 @@ describe("タイムアウト", () => {
       }
 
       assert.ok(ollama.state.aborted > 0, "mock Ollama did not see the request aborted");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("requestTimeout は応答の長さに効かない", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    // 要求を受け取り終えるまでの上限を 2 秒にし、約 10 秒かかる生成を流す
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, HTTP_REQUEST_TIMEOUT: "2000" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  test("requestTimeout より長い生成も、途中で切れずに最後まで返る", async () => {
+    assert.match(server.output(), /\[http\] request timeout: 2 s/);
+
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_SLOW" } });
+
+      assert.ok(!result.isError, text(result));
+
+      assert.match(text(result), /chunk49/);
+
+      assert.match(text(result), /done_reason=stop/);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("失敗した要求の回数の制限", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, MCP_AUTH_TOKEN: "test-token" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  const NOTIFY = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+  test("成功した要求は数えない", async () => {
+    for (let i = 0; i < 80; i += 1) {
+      const response = await post(server.url, {
+        body: NOTIFY,
+        headers: { Authorization: "Bearer test-token" },
+      });
+
+      assert.equal(response.status, 202, `request ${i}`);
+    }
+  });
+
+  test("認証の失敗が 1 分に 60 回を超えると、429 で断る", async () => {
+    for (let i = 0; i < 60; i += 1) {
+      const response = await post(server.url, { body: INITIALIZE });
+
+      assert.equal(response.status, 401, `request ${i}`);
+    }
+
+    const limited = await post(server.url, { body: INITIALIZE });
+
+    assert.equal(limited.status, 429);
+
+    assert.ok(limited.headers.get("retry-after"), "Retry-After is missing");
+
+    const body = (await limited.json()) as { jsonrpc: string; error: { code: number; message: string } };
+
+    assert.equal(body.jsonrpc, "2.0");
+
+    assert.match(body.error.message, /Too many failed requests/);
+  });
+});
+
+describe("OLLAMA_NUM_CTX を設定した HTTP", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, OLLAMA_NUM_CTX: "8192" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  test("num_ctx を送り、その値で上限を警告し、説明と状態の確認にも出す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const { tools } = await client.listTools();
+
+      assert.match(tools.find((t) => t.name === "ollama_chat")?.description ?? "", /context window is 8192 tokens/);
+
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_FULL_CONTEXT" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.options?.num_ctx, 8192);
+
+      assert.match(text(result), /WARNING: the prompt used 8192 of about 8192 context tokens \(OLLAMA_NUM_CTX\)/);
+
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      // 予算は 8192 から出力（既定 4096）と余白（2048）を引いた量
+      assert.match(health, /context: num_ctx 8192 \(OLLAMA_NUM_CTX\); file input budget about 2048 tokens/);
     } finally {
       await client.close();
     }
