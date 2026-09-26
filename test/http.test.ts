@@ -185,6 +185,43 @@ describe("認証なしの HTTP", () => {
     }
   });
 
+  test("ollama_health に、このプロセスで任せた量の合計を出す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      // それまでの試験で、既定のモデル（mock:latest）と deep（qwen2.5-coder:14b）に任せている
+      assert.match(health, /by model: .*mock:latest: \d+ calls, \d+ prompt \+ \d+ output tokens/);
+
+      assert.match(health, /qwen2\.5-coder:14b: \d+ calls/);
+
+      assert.match(health, /by identity: anonymous: \d+ calls/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("OLLAMA_NUM_CTX を設定しなければ num_ctx を送らず、見込みの 32768 で上限を警告する", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_FULL_CONTEXT" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.options?.num_ctx, undefined);
+
+      assert.match(text(result), /WARNING: the prompt used 32768 of about 32768 context tokens \(assumed/);
+
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      assert.match(health, /context: not sent/);
+
+      assert.match(health, /loaded models: mock:latest \(1\.0 GB VRAM, context 8192, until /);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("入っていないモデルを指定されたら、入っているモデルの一覧を添えて返す", async () => {
     const client = await connect(server.url);
 
@@ -774,5 +811,46 @@ describe("失敗した要求の回数の制限", () => {
     assert.equal(body.jsonrpc, "2.0");
 
     assert.match(body.error.message, /Too many failed requests/);
+  });
+});
+
+describe("OLLAMA_NUM_CTX を設定した HTTP", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    server = await startHttpServer({ OLLAMA_URL: ollama.url, OLLAMA_NUM_CTX: "8192" });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+  });
+
+  test("num_ctx を送り、その値で上限を警告し、説明と状態の確認にも出す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const { tools } = await client.listTools();
+
+      assert.match(tools.find((t) => t.name === "ollama_chat")?.description ?? "", /context window is 8192 tokens/);
+
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_FULL_CONTEXT" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.options?.num_ctx, 8192);
+
+      assert.match(text(result), /WARNING: the prompt used 8192 of about 8192 context tokens \(OLLAMA_NUM_CTX\)/);
+
+      const health = text(await client.callTool({ name: "ollama_health", arguments: {} }));
+
+      // 予算は 8192 から出力（既定 4096）と余白（2048）を引いた量
+      assert.match(health, /context: num_ctx 8192 \(OLLAMA_NUM_CTX\); file input budget about 2048 tokens/);
+    } finally {
+      await client.close();
+    }
   });
 });

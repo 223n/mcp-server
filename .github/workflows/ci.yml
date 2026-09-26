@@ -136,9 +136,10 @@ jobs:
       # 片方の版で落ちても、もう片方の結果を見られるようにする
       fail-fast: false
       matrix:
-        # 22 は package.json の engines の下限（22.18 以上なら .ts をそのまま動かせる）、
-        # 26 は Dockerfile の版
-        node-version: ['22', '26']
+        # 22.18 は package.json の engines の下限（.ts をそのまま動かせる最初の版）。
+        # setup-node は '22' をその時点の最新の 22.x に解決するため、下限は版を書いて試す。
+        # 22 は最新の 22.x、26 は Dockerfile の版
+        node-version: ['22.18', '22', '26']
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,10 +205,12 @@ jobs:
 
       - name: 起動して応答を確かめる
         run: |
-          # docker-compose.yml と同じ絞り込み（読み取り専用のルート、/tmp だけ書ける、権限なし）で起動する
+          # docker-compose.yml と同じ絞り込み（読み取り専用のルート、/tmp だけ書ける、権限なし）で起動する。
+          # 監査ログも docker-compose.yml と同じく名前付きボリュームに書かせる
           docker run --detach --name "${CONTAINER}" \
             --read-only --tmpfs /tmp \
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 \
+            --volume "${CONTAINER}-audit:/var/log/ollama-mcp" --env AUDIT_LOG_DIR=/var/log/ollama-mcp \
             "${IMAGE}"
 
           for _ in $(seq 1 30); do
@@ -241,9 +244,20 @@ jobs:
           echo "stdio: ${stdio_response}"
           grep --quiet '"serverInfo"' <<< "${stdio_response}"
 
+          # stdio の標準エラーは docker logs に残らないため、監査の記録がボリュームのファイルに残ることを確かめる。
+          # Ollama は無いので呼び出しは失敗するが、失敗も記録される
+          initialized='{"jsonrpc":"2.0","method":"notifications/initialized"}'
+          call='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ollama_list_models","arguments":{}}}'
+          { echo "${initialize}"; echo "${initialized}"; echo "${call}"; sleep 5; } \
+            | docker exec -i "${CONTAINER}" node stdio.ts > /dev/null
+          audit_log=$(docker exec "${CONTAINER}" sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl')
+          echo "audit: ${audit_log}"
+          grep --quiet '"tool":"ollama_list_models"' <<< "${audit_log}"
+
       - name: ログを出して片付ける
         if: always()
         run: |
           docker logs "${CONTAINER}" || true
           docker rm --force "${CONTAINER}" || true
+          docker volume rm "${CONTAINER}-audit" || true
           docker image rm "${IMAGE}" || true

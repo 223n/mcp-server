@@ -50,6 +50,10 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 - `inline_files`には、サーバーが読めないファイルの中身を`{"name": ..., "content": ...}`の形で渡します。許可ルートの外にあるファイルや、Claudeが別の環境で開いているファイルに使います
   - これはトークンを節約しません。`content`の分はどちらにせよ払います。サーバーが読めるパスなら必ず`files`を使います
 - 渡せる量の上限は、文字数ではなくトークン数の目安で測ります。日本語のコメントが多いコードは1文字がほぼ1トークンになるためです
+  - 既定の上限は約24000トークンで、コンテキストを32kトークンと見込んでいます。実際の長さはOllamaの設定（`OLLAMA_CONTEXT_LENGTH`、Modelfileの`PARAMETER num_ctx`）で決まり、サーバーからは見えません
+  - `OLLAMA_NUM_CTX`を設定すると、その値を`num_ctx`としてOllamaに送り、上限もそこから出力の分と余白（2048）を引いた量にします
+  - 入力が上限に張り付いたとき（`prompt_tokens`がコンテキスト長の9割以上）は、入力の一部が落とされた疑いとして警告します
+  - `ollama_health`の`loaded models`に、読み込み中のモデルと、Ollamaが返せば実際のコンテキスト長が出ます
   - 上限を超えた分は丸ごと落とし、落としたファイル名を応答とプロンプトの両方に書きます。黙って切りません
 - `list_files`は`pattern`にグロブを取ります。大文字と小文字は区別しません
   - `*`は直下、`**/*.php`は下の階層のPHPのファイル、`*.{js,ts}`は選択肢、末尾の`/`はディレクトリだけです
@@ -115,6 +119,7 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `OLLAMA_MAX_DURATION`                    | `3000000`                                                      | 1回の生成全体の上限（ミリ秒）です                                                                                                                  |
 | `OLLAMA_MAX_CONCURRENCY`                 | `2`                                                            | 同時に走らせる生成の数です。OllamaはGPUを1つずつ使うため、並べても全体は速くなりません                                                             |
 | `OLLAMA_MAX_QUEUE`                       | `8`                                                            | 待ち行列の長さの上限です。ここも一杯なら、待たせずにその場で断ります                                                                              |
+| `OLLAMA_NUM_CTX`                         | `0`                                                            | Ollamaに送るコンテキスト長（`num_ctx`）です。0なら送らず、Ollamaの設定に任せます。上げるとVRAMを多く使うため、載り切る値にします                  |
 | `HTTP_REQUEST_TIMEOUT`                   | `60000`                                                        | HTTPの要求を受け取り終えるまでの上限（ミリ秒）です。応答を返している時間（生成の時間）には効きません                                              |
 | `ALLOWED_HOSTS`                          | `localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech` | HTTPで受け付ける`Host`と`Origin`です                                                                                                               |
 | `HTTP_ALLOW_FILES`                       | `false`                                                        | HTTPでもファイルの読み込みを許すかどうかです。認証（`MCP_AUTH_TOKEN`か`CF_ACCESS_*`）がないときは無視します                                        |
@@ -131,6 +136,8 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
 | `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
 | `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
+| `AUDIT_LOG_DIR`                          | `docker-compose.yml`で設定                                     | 監査ログを1日1ファイルで書き出す先（コンテナーの中の絶対パス）です。空なら標準エラーにだけ出します。`FILE_ROOTS`の中は拒みます                   |
+| `AUDIT_RETENTION_DAYS`                   | `30`                                                           | 監査ログのファイルを残す日数です                                                                                                                   |
 
 - タイムアウトしても、それまでに生成された部分は`done_reason=timeout`と警告を付けて返します
 - 無通信の上限（`OLLAMA_TIMEOUT`）は300秒のままです。全体の上限だけを延ばし、Ollamaが固まったときは早く気付けるようにしています
@@ -271,12 +278,30 @@ GitHubが認証のない要求に404を返すためで、名前の打ち間違�
 ```
 
 - 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
+- `AUDIT_LOG_DIR`を設定すると、標準エラーに加えて`audit-YYYYMMDD.jsonl`（UTCの日付）へ1行ずつ追記します
+  - stdioの入口は`docker exec`で起動する別のプロセスで、その標準エラーはClaude DesktopやClaude Codeの側に流れ、`docker logs`には残りません。書き込みのツール（`git_write`、`github_write`）はstdioでだけ出るため、その記録はこのファイルに残します
+  - `docker-compose.yml`は、名前付きボリューム`audit-log`を`/var/log/ollama-mcp`にマウントし、既定でここに書きます。`FILE_ROOTS`の外に置き、ファイルのツールから読めないようにしています。`FILE_ROOTS`の中を指定すると、起動時に警告してファイルには書きません
+  - HTTPとstdioの両方のプロセスが同じファイルに追記します。古いファイルは、HTTPのプロセスが起動時と1日ごとに消します（`AUDIT_RETENTION_DAYS`、既定30日）
+  - 読むときは`docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl'`です。`jq`を通すと絞り込めます
+- ローカルのモデルに生成を任せた呼び出しには`usage`が付きます。実際に使ったモデル（別名は読み替えたあとの名前）、`prompt_tokens`、`output_tokens`、`done_reason`、枠を待った時間（`queued_ms`）です
+
+    ```json
+    {"ts":"2026-09-26T12:00:00.000Z","identity":"stdio","kind":"tool","tool":"ollama_chat","ok":true,"ms":1200,"args":{"model":"fast"},"usage":{"model":"nucbox-fast:latest","prompt_tokens":4096,"output_tokens":301,"done_reason":"stop","queued_ms":0}}
+    ```
+
+  - どれだけ任せたかをモデルごとに数えるときは、次のようにします
+
+    ```bash
+    docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl' | jq -s 'map(select(.usage)) | group_by(.usage.model) | map({model: .[0].usage.model, calls: length, prompt_tokens: (map(.usage.prompt_tokens // 0) | add), output_tokens: (map(.usage.output_tokens // 0) | add)})'
+    ```
+
+  - `ollama_health`は、そのプロセスが動き始めてからの合計を、モデルごとと識別子ごとに出します。stdioのプロセスはクライアントごとに起動し直されるため、長い期間はファイルで数えます
 - `identity`は、Cloudflare AccessのJWTの`email`、サービストークンなら`service:<クライアントID>`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
 - `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
   - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
   - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
 - `resources/read`にはツール名がなく、ツールの記録に載りません。読み取りの経路としては同じ重さなので、`"kind":"resource"`として別に記録します
-- Dockerでは`docker logs ollama-mcp`で見られます。ログは10MBを3世代まで残します
+- HTTPの入口の記録は、`docker logs ollama-mcp`でも見られます。ログは10MBを3世代まで残します
 
 ### 同時に走らせる数を絞る
 
@@ -419,6 +444,9 @@ npm test
 - HTTPでは`git_write`と`github_write`を出さないこと
 - 監査ログに`prompt`や`code`の中身が出ず、識別子とファイルのパスは出ること
 - `resources/read`で復号できないURI（壊れた符号化、NUL）を拒んだときも、監査ログに残ること
+- `OLLAMA_NUM_CTX`を設定したときだけ`num_ctx`を送り、入力の予算と上限の警告にその値を使うこと。`ollama_health`が読み込み中のモデルを出すこと
+- 生成を任せた呼び出しの記録に`usage`が付き、`ollama_health`がモデルごとと識別子ごとの合計を出すこと
+- 監査ログを日付ごとのファイルにも追記し、`FILE_ROOTS`の中の書き出し先を拒み、古いファイルだけを消すこと。CIでは、stdioの呼び出しの記録が名前付きボリュームに残ることを確かめます
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
@@ -435,7 +463,7 @@ npm test
 - `docker-compose.yml`がコンテナーの権限を絞り、`C:\dev`を読み取り専用にして、書き込み先だけを読み書きできる形で重ねていること。CIが同じ絞り込みで起動すること
 - 環境変数の不正な値で、起動時に止まること
 
-CIは、Node 22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。
+CIは、Node 22.18（`engines`の下限）と最新の22と26で試験し、Dockerのイメージを作って起動したうえでHTTPとstdioの応答を確かめます。
 あわせてTrivyでイメージの脆弱性を見ます。
 `apk`で入れたパッケージの版はDependabotが追わないため、ここで拾います。
 直せるもの（上流に修正がある高・重大）が見つかると失敗し、直せないものは記録に残すだけにします。

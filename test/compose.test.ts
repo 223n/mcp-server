@@ -124,3 +124,27 @@ test("CI はコンテナーを docker-compose.yml と同じ絞り込みで起動
     assert.ok(run.includes(flag), `ci.yml docker run is missing ${flag}`);
   }
 });
+
+test("監査ログは FILE_ROOTS の外の名前付きボリュームに書く", () => {
+  const compose = composeText();
+
+  const dir = /AUDIT_LOG_DIR: \$\{AUDIT_LOG_DIR:-([^}]+)\}/.exec(compose)?.[1] ?? "";
+
+  assert.ok(dir.startsWith("/"), `AUDIT_LOG_DIR default should be an absolute container path: "${dir}"`);
+
+  // 名前付きボリュームをその場所にマウントし、トップレベルで宣言していること
+  const mount = new RegExp(`^\\s+- ([a-z0-9-]+):${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").exec(compose);
+
+  assert.ok(mount, `no named volume is mounted at ${dir}`);
+
+  assert.match(compose, new RegExp(`^volumes:\\n\\s+${mount[1]}:`, "m"));
+
+  // ファイルのツールから読めない場所であること
+  const roots = /FILE_ROOTS: '([^']+)'/.exec(compose)?.[1] ?? "";
+
+  for (const root of roots.split(";")) {
+    const container = root.split("=")[1] ?? "";
+
+    assert.ok(container && !dir.startsWith(`${container}/`) && dir !== container, `${dir} is inside FILE_ROOTS (${root})`);
+  }
+});

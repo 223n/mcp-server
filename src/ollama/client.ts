@@ -31,6 +31,16 @@ export type OllamaTags = {
   }[];
 };
 
+/** /api/ps の応答。いま読み込まれているモデル。context_length は Ollama の版によっては無い */
+export type OllamaPs = {
+  models?: {
+    name?: string;
+    size_vram?: number;
+    context_length?: number;
+    expires_at?: string;
+  }[];
+};
+
 const seconds = (ms: number): number => Math.round(ms / 1000);
 
 // 状態の確認（/api/version、/api/tags）の上限。生成と違って数秒で返るものなので、

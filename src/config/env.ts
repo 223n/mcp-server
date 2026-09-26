@@ -59,6 +59,11 @@ export const env = {
 
   OLLAMA_MAX_QUEUE: toInt("OLLAMA_MAX_QUEUE", 8, 0, 1000),
 
+  // Ollama に送るコンテキスト長（num_ctx）。0 なら送らず、Ollama の設定
+  // （OLLAMA_CONTEXT_LENGTH、Modelfile の PARAMETER num_ctx）に任せる。
+  // 上げると KV キャッシュで VRAM を多く使うため、載り切る値にする。要求ごとに変えるとモデルを読み込み直すため、1 つの値にする
+  OLLAMA_NUM_CTX: toInt("OLLAMA_NUM_CTX", 0, 0, 1048576),
+
   // HTTP の要求を受け取り終えるまでの上限（Node の requestTimeout）。
   // 応答を返している時間（生成の時間）には効かないため、OLLAMA_MAX_DURATION とは結び付けない。
   // 長くすると、本文をゆっくり送り続ける相手に、接続をその間つかまれる
@@ -115,6 +120,14 @@ export const env = {
   GIT_USER_NAME: process.env.GIT_USER_NAME || "",
 
   GIT_USER_EMAIL: process.env.GIT_USER_EMAIL || "",
+
+  // 監査ログを 1 日 1 ファイル（audit-YYYYMMDD.jsonl）で書き出す先（コンテナーの中の絶対パス）。
+  // 空なら標準エラーにだけ出す。stdio の標準エラーはクライアントの側に流れ、docker logs に残らないため、
+  // stdio でだけ出る書き込みのツールを使うなら設定する
+  AUDIT_LOG_DIR: process.env.AUDIT_LOG_DIR || "",
+
+  // 監査ログのファイルを残す日数。HTTP のプロセスが起動時と 1 日ごとに古いものを消す
+  AUDIT_RETENTION_DAYS: toInt("AUDIT_RETENTION_DAYS", 30, 1, 3650),
 
   // HTTP の認証。どちらかを設定すると、満たさないリクエストは 401 になる
   MCP_AUTH_TOKEN: process.env.MCP_AUTH_TOKEN || "",

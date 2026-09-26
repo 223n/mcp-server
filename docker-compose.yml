@@ -42,6 +42,8 @@ services:
       # Ollama は GPU を 1 つずつ使うため、並べても全体は速くならない
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-2}
       OLLAMA_MAX_QUEUE: ${OLLAMA_MAX_QUEUE:-8}
+      # Ollama に送るコンテキスト長（num_ctx）。0 なら送らず、Ollama の設定に任せる
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-0}
       # HTTP の要求を受け取り終えるまでの上限（ミリ秒）。生成の時間には効かない
       HTTP_REQUEST_TIMEOUT: ${HTTP_REQUEST_TIMEOUT:-60000}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],host.docker.internal,mcp.223n.tech}
@@ -74,6 +76,10 @@ services:
       GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:-}
       # PR の作成とコメントを許すかどうか。stdio でだけ効き、HTTP では常に無効
       GITHUB_ALLOW_WRITE: ${GITHUB_ALLOW_WRITE:-false}
+      # 監査ログの書き出し先（コンテナーの中）と、残す日数。下の volumes で名前付きボリュームをマウントしている。
+      # stdio の標準エラーは docker logs に残らないため、stdio でだけ出る書き込みのツールの記録はここに残る
+      AUDIT_LOG_DIR: ${AUDIT_LOG_DIR:-/var/log/ollama-mcp}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-30}
 
     volumes:
       # C:/dev は読み取り専用にする。サーバーが書くのは CLONE_ROOT と OUTPUT_DIR の配下だけだが、
@@ -85,6 +91,9 @@ services:
       - C:/dev/claude:/work/dev/claude
       - C:/dev/ollama-out:/work/dev/ollama-out
       - C:/docker:/work/docker:ro
+      # 監査ログ。FILE_ROOTS の外に置き、ファイルのツールから読めないようにする。
+      # 読むときは docker exec ollama-mcp sh -c 'cat /var/log/ollama-mcp/audit-*.jsonl'
+      - audit-log:/var/log/ollama-mcp
 
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
@@ -97,3 +106,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  audit-log:
