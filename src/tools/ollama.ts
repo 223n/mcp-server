@@ -23,7 +23,9 @@ import { createLimiter } from "../ollama/limiter.ts";
 
 import { buildFileContext, DEFAULT_PROMPT_BUDGET } from "./files.ts";
 
-import { degenerationWarning, preview, saveOutput } from "./output.ts";
+import { startJob } from "./jobs.ts";
+
+import { degenerationWarning, outputLabel, outputReady, preview, saveOutput } from "./output.ts";
 
 import { toFileUri } from "./resources.ts";
 
@@ -173,7 +175,7 @@ async function saveAndSummarise(
   result: ChatResult,
   notes: string[],
   { outputName }: { outputName?: string },
-): Promise<ToolResult> {
+): Promise<Exclude<ToolResult, string>> {
   const text = result.content.trim();
 
   const saved = await saveOutput({ name: outputName, text, model: result.model });
@@ -218,6 +220,7 @@ export type ChatToolArgs = {
   line_numbers?: boolean;
   save_output?: boolean;
   output_name?: string;
+  background?: boolean;
   temperature?: number;
   max_tokens?: number;
 };
@@ -237,6 +240,9 @@ export async function runChat(
     maxTokens,
     save,
     outputName,
+    format,
+    postProcess,
+    onProgress,
   }: ChatRequest,
   ctx?: ToolContext,
 ): Promise<ToolResult> {
@@ -245,7 +251,7 @@ export async function runChat(
   const built =
     files?.length || inlineFiles?.length || sections?.length
       ? await buildFileContext({ files, inlineFiles, sections, lineNumbers, budget: inputBudget(maxTokens), signal })
-      : ({ block: "", notes: [] } satisfies FileContext);
+      : ({ block: "", notes: [], shown: [] } satisfies FileContext);
 
   const context = { block: built.block, notes: [...sectionNotes, ...built.notes] };
 
@@ -253,15 +259,28 @@ export async function runChat(
   // 伝えないと、渡していないファイルまで見たつもりで「指摘なし」と答えてしまう
   const content = [prompt, ...context.notes, context.block].filter(Boolean).join("\n\n");
 
-  const report = progressReporter(ctx);
+  const notify = progressReporter(ctx);
+
+  // クライアントへの通知と、呼び出し側の知らせ（ジョブの状態）の両方に流す
+  const report: ProgressReporter | undefined =
+    notify || onProgress
+      ? (info) => {
+          notify?.(info);
+
+          onProgress?.(info);
+        }
+      : undefined;
 
   const modelName = resolveModel(model) ?? config.defaultModel;
 
   const requested = Date.now();
 
   const result = await limiter.run(
-    () =>
-      ollamaChat({
+    () => {
+      // 枠を得て生成を始めたことを知らせる。ジョブの状態を「待ち」から「生成中」に変える
+      onProgress?.({ chunks: 0, elapsedMs: 0 });
+
+      return ollamaChat({
         model: modelName,
 
         messages: [
@@ -278,10 +297,13 @@ export async function runChat(
           ...(config.ollamaNumCtx ? { num_ctx: config.ollamaNumCtx } : {}),
         },
 
+        format,
+
         signal,
 
         onProgress: report,
-      }),
+      });
+    },
 
     {
       signal,
@@ -307,15 +329,78 @@ export async function runChat(
     queued_ms: Math.max(0, Date.now() - requested - result.elapsedMs),
   });
 
+  // 出力を読み替える（構造化したレビューの検証など）。統計と警告は元の出力のものを使う
+  const processed = postProcess?.(result.content, built.shown ?? []);
+
+  const final = processed ? { ...result, content: processed.content } : result;
+
+  const notes = [...context.notes, ...(processed?.notes ?? [])];
+
+  const structured = processed?.structured;
+
   if (save) {
-    return await saveAndSummarise(result, context.notes, { outputName });
+    const saved = await saveAndSummarise(final, notes, { outputName });
+
+    return structured ? { ...saved, structured } : saved;
   }
 
-  return formatResult(result, context.notes);
+  const text = formatResult(final, notes);
+
+  return structured ? { text, structured } : text;
+}
+
+/**
+ * background を付けた呼び出しをジョブとして受け付け、付けなければそのまま生成する。
+ *
+ * ジョブの生成には、クライアントの中断も進捗の通知も渡さない。応答を返したあとも続けるためである。
+ * 結果は必ず OUTPUT_DIR に書く。応答に全文を載せる相手がもういないため
+ */
+export async function runChatOrJob(
+  tool: string,
+  args: { background?: boolean },
+  request: ChatRequest,
+  ctx?: ToolContext,
+): Promise<ToolResult> {
+  if (!args.background) {
+    return await runChat(request, ctx);
+  }
+
+  if (!outputReady()) {
+    throw new Error("Background jobs need saving (OUTPUT_DIR), which is disabled on this server");
+  }
+
+  // 枠が埋まっているなら、受け付けの時点で断る。受け付けてから失敗させると、呼び出し側は ID を待ち続ける
+  const stats = limiter.stats();
+
+  if (stats.active >= stats.max && stats.queued >= stats.maxQueue) {
+    throw new Error(
+      `Too many generations in flight (${stats.active} running, ${stats.queued} queued, limit ${stats.max}+${stats.maxQueue}). Try again in a moment.`,
+    );
+  }
+
+  const model = resolveModel(request.model) ?? config.defaultModel;
+
+  const { id } = startJob({
+    tool,
+
+    model,
+
+    args,
+
+    run: (onProgress) => runChat({ ...request, save: true, onProgress }),
+  });
+
+  return [
+    `Accepted as background job ${id} (${tool}, model ${model}); ${stats.active} running and ${stats.queued} queued on this server before it.`,
+    `The answer will be saved under ${outputLabel()}.`,
+    `Call \`ollama_job\` with {"id": "${id}"} in about 1 minute, and again until it is done; long generations take several minutes. Finished jobs are kept for 1 hour.`,
+  ].join("\n");
 }
 
 export async function ollamaChatTool(args: ChatToolArgs, ctx?: ToolContext): Promise<ToolResult> {
-  return await runChat(
+  return await runChatOrJob(
+    "ollama_chat",
+    args,
     {
       model: args.model,
 

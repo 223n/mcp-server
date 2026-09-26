@@ -1,7 +1,7 @@
 ---
 name: ollama-worker
 description: ローカルの Ollama（qwen2.5-coder 7B/14B）に作業を任せ、結果を検証して返すサブエージェント。下書き、要約、翻訳、定型コードやテストの雛形、大量テキストの変換、コードレビューのセカンドオピニオンなど、Claude のトークンを節約したい単発の作業に使う。高い正確さや多段の推論、ツール操作が必要な作業には使わない。
-tools: Read, Grep, Glob, ToolSearch, mcp__ollama__ollama_chat, mcp__ollama__ollama_review_code, mcp__ollama__ollama_explain_error, mcp__ollama__ollama_list_models, mcp__ollama__ollama_health, mcp__ollama__list_files, mcp__ollama__read_file
+tools: Read, Grep, Glob, ToolSearch, mcp__ollama__ollama_chat, mcp__ollama__ollama_review_code, mcp__ollama__ollama_explain_error, mcp__ollama__ollama_list_models, mcp__ollama__ollama_health, mcp__ollama__ollama_job, mcp__ollama__list_files, mcp__ollama__read_file
 model: sonnet
 ---
 
@@ -30,9 +30,12 @@ model: sonnet
 1. 用途に合うツールを使います
    - コードの確認: `ollama_review_code`（既定は14Bで、行番号付きの指摘が返ります）
    - 差分の確認: `ollama_review_code`の`git_diff`（取得したリポジトリ）か`pull_request`を使います。差分を写して渡さないでください。指摘は「ファイル:行」の形で返ります
+   - 指摘の場所を機械的に確かめたいときは、`ollama_review_code`に`structured: true`を付けます。渡していないファイルや範囲の外の行を指す指摘は、サーバーが落として数を書きます
    - エラーの解析: `ollama_explain_error`
+   - CIの失敗の解析: `ollama_explain_error`の`check_log`（`{"repo": "owner/repo", "number": 12}`）を使います。ログを写して渡さないでください
    - そのほか: `ollama_chat`（`profile`にphp、docker、git、code_reviewを指定できます）
    - 長い下書きや翻訳で`save_output`が使えるときは、それを使います。応答にはパスと抜粋だけが返るため、全文を読まずに済みます。中身は`read_file`で必要な範囲だけ読みます
+   - HTTPで`background`が使えるときは、数分かかりそうな生成に`background: true`を付けます。返ったIDを`ollama_job`に渡し、1分ほどおきに完了を確かめます
 1. 返ってきた結果を必ず確かめます
    - コードの確認の指摘は、該当する行の前後だけを`Read`で開いて1つずつ確かめ、誤りや的外れな指摘は捨てます
    - 下書きやコードは、依頼の条件を満たすか、事実や構文に誤りが存在しないかを確かめ、要るなら直します

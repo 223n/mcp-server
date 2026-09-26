@@ -111,6 +111,10 @@ export const env = {
   // 既定は false。HTTP では、この値に関わらず恒久的に使えない
   GITHUB_ALLOW_WRITE: process.env.GITHUB_ALLOW_WRITE === "true",
 
+  // GitHub の API の 1 回の呼び出し（本文を読み終えるまで）の上限。
+  // クライアントの中断だけに頼ると、GitHub が応答を返さないとき、クライアントが諦めるまで待ち続けるため
+  GITHUB_API_TIMEOUT: toInt("GITHUB_API_TIMEOUT", 30000, 1000, MAX_TIMER_MS),
+
   // git の子プロセスが何も出さない状態の上限と、1 回の操作全体の上限
   GIT_TIMEOUT: toInt("GIT_TIMEOUT", 120000, 1000, MAX_TIMER_MS),
 

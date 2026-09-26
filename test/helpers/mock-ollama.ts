@@ -9,6 +9,7 @@ export type MockChat = {
   model?: string;
   messages: { role: string; content: string }[];
   options?: Record<string, unknown>;
+  format?: unknown;
 };
 
 export type MockState = { chats: MockChat[]; aborted: number };
@@ -19,6 +20,7 @@ export type MockState = { chats: MockChat[]; aborted: number };
 //   MOCK_ERROR  HTTP 500 とエラーの JSON を返す
 // モデルの名前が "missing:model" なら、入っていないモデルとして HTTP 404 を返す
 //   MOCK_FULL_CONTEXT  prompt_eval_count を num_ctx（無ければ 32768）ちょうどにする（上限に張り付いた警告の試験用）
+//   MOCK_JSON:<文字列>  その行の残りを、そのままモデルの出力として 1 回で返す（構造化したレビューの試験用）
 // 応答の最初の断片には、受け取ったファイルの数（"### File:" の数）を入れる
 export async function startMockOllama() {
   const state: MockState = { chats: [], aborted: 0 };
@@ -77,6 +79,21 @@ export async function startMockOllama() {
 
       if (body.model === "missing:model") {
         return sendJson(res, 404, { error: 'model "missing:model" not found, try pulling it first' });
+      }
+
+      // 試験が決めた出力をそのまま返す
+      const fixed = /MOCK_JSON:(.*)$/m.exec(prompt)?.[1];
+
+      if (fixed !== undefined) {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+
+        res.write(`${JSON.stringify({ message: { role: "assistant", content: fixed }, done: false })}\n`);
+
+        res.end(
+          `${JSON.stringify({ model: body.model, done: true, done_reason: "stop", prompt_eval_count: 10, eval_count: 1 })}\n`,
+        );
+
+        return;
       }
 
       const slow = prompt.includes("MOCK_SLOW");

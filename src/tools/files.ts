@@ -4,7 +4,7 @@ import { open, readdir, realpath, stat } from "node:fs/promises";
 
 import path from "node:path";
 
-import type { ContextSection, FileContext, InlineFile, Root } from "../types.ts";
+import type { ContextSection, FileContext, InlineFile, Root, ShownPart } from "../types.ts";
 
 import { config } from "../config/config.ts";
 
@@ -647,9 +647,36 @@ function render(part: Part): string {
   return `${part.label}\n${fence}${part.extension}\n${part.body}\n${fence}`;
 }
 
+// 行番号を振った本文から、番号の付いた行の範囲を拾う。
+// numberLines は "12| "、差分は "12|+" の形で振るため、行頭の番号と "|" だけを見る。
+// 続いた番号は 1 つの範囲にまとめる（差分なら @@ ごと、行範囲なら切り出した範囲）
+function numberedRanges(body: string): [number, number][] {
+  const ranges: [number, number][] = [];
+
+  for (const line of body.split("\n")) {
+    const match = /^\s*(\d+)\|/.exec(line);
+
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const number = Number(match[1]);
+
+    const last = ranges.at(-1);
+
+    if (last && number === last[1] + 1) {
+      last[1] = number;
+    } else {
+      ranges.push([number, number]);
+    }
+  }
+
+  return ranges;
+}
+
 // 1 件も入らないときの最後の手段。先頭のファイルを入るところまで入れ、切ったことを本文に書く。
 // 空の文脈で答えさせると、読んでいないのに「指摘なし」と返ってくるため、空にはしない
-function renderTruncated(part: Part, budget: number): string {
+function renderTruncated(part: Part, budget: number): { text: string; kept: string } {
   const lines = part.body.split("\n");
 
   const kept: string[] = [];
@@ -673,7 +700,7 @@ function renderTruncated(part: Part, budget: number): string {
 
   const fence = fenceFor(body);
 
-  return `${part.label}\n${fence}${part.extension}\n${body}\n${fence}`;
+  return { text: `${part.label}\n${fence}${part.extension}\n${body}\n${fence}`, kept: kept.join("\n") };
 }
 
 /**
@@ -733,12 +760,30 @@ export async function buildFileContext({
 
   const omitted: string[] = [];
 
+  // 渡したものと、そこで指してよい行。構造化したレビューが、渡していないファイルや行を指す指摘を落とすのに使う。
+  // 番号を振って渡したものだけを載せる（差分は常に、ファイルは lineNumbers のとき）
+  const shown: ShownPart[] = [];
+
+  const include = (part: Part, text: string, numbered: boolean, body = part.body): void => {
+    blocks.push(text);
+
+    if (numbered) {
+      shown.push({ name: part.display, ranges: numberedRanges(body) });
+    }
+  };
+
   let used = 0;
 
   let first: Part | undefined;
 
+  let firstNumbered = false;
+
   for (const part of sections) {
-    first ??= part;
+    if (!first) {
+      first = part;
+
+      firstNumbered = true;
+    }
 
     const text = render(part);
 
@@ -752,7 +797,7 @@ export async function buildFileContext({
 
     used += tokens;
 
-    blocks.push(text);
+    include(part, text, true);
   }
 
   for (const target of unique) {
@@ -767,7 +812,11 @@ export async function buildFileContext({
 
     const part = await readPart(target, { lineNumbers });
 
-    first ??= part;
+    if (!first) {
+      first = part;
+
+      firstNumbered = lineNumbers;
+    }
 
     const text = render(part);
 
@@ -781,13 +830,17 @@ export async function buildFileContext({
 
     used += tokens;
 
-    blocks.push(text);
+    include(part, text, lineNumbers);
   }
 
   for (const inline of inlineFiles) {
     const part = inlinePart(inline, { lineNumbers });
 
-    first ??= part;
+    if (!first) {
+      first = part;
+
+      firstNumbered = lineNumbers;
+    }
 
     const text = render(part);
 
@@ -801,13 +854,15 @@ export async function buildFileContext({
 
     used += tokens;
 
-    blocks.push(text);
+    include(part, text, lineNumbers);
   }
 
   const notes: string[] = [];
 
   if (blocks.length === 0 && first) {
-    blocks.push(renderTruncated(first, budget));
+    const truncated = renderTruncated(first, budget);
+
+    include(first, truncated.text, firstNumbered, truncated.kept);
 
     omitted.shift();
 
@@ -828,7 +883,7 @@ export async function buildFileContext({
     );
   }
 
-  return { block: blocks.join("\n\n"), notes, usedTokens: used };
+  return { block: blocks.join("\n\n"), notes, shown, usedTokens: used };
 }
 
 /**

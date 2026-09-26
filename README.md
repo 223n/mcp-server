@@ -34,12 +34,13 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 | `ollama_explain_error` | エラーやログの原因の候補と対処を返します                                                                                  | `DEEP_MODEL`    |
 | `ollama_list_models`   | 入っているモデルの一覧を返します                                                                                          | -               |
 | `ollama_health`        | Ollamaが動いているかと、サーバーの設定を返します                                                                          | -               |
+| `ollama_job`           | `background: true`で受け付けた生成の状態と、保存先を返します。HTTPで保存が使えるときだけ出ます                            | -               |
 | `list_files`           | 許可ルートの中のファイルとディレクトリを一覧します。`files`に渡すパスを探すときに使います。ファイルを扱えるときだけ出ます | -               |
 | `read_file`            | 1つのファイルを、ローカルのモデルに渡さずにそのまま読みます。`save_output`で書いた結果を読み返すときに使います。ファイルを扱えるときだけ出ます | -               |
 | `git_clone`            | GitHubのリポジトリを`CLONE_ROOT`の配下に取得します。`owner/repo`だけを受け、URLは受けません。`CLONE_ROOT`を設定したときだけ出ます | -               |
 | `git_read`             | 取得したリポジトリの状態を読みます。`status`、`log`、`diff`、`show`、`branches`、`remotes`です | -               |
 | `git_write`            | ブランチの作成、staging、commit、pushです。`GIT_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
-| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
+| `github_read`          | Pull RequestとIssueと差分とコメントとチェックを読みます。失敗したCIの注釈とログの末尾も読めます（`check_log`）。`GITHUB_MCP_TOKEN`を設定したときだけ出ます | -               |
 | `github_write`         | Pull Requestの作成とコメントです。`GITHUB_ALLOW_WRITE=true`にしたstdioでだけ出ます | -               |
 
 - ファイルを扱えるとき（stdioと、設定したHTTP）は、`files`引数にWindowsの絶対パスを渡すと、サーバーがファイルを読み込みます。Claudeはファイルの中身を引数として書き出さずに済むため、トークンを節約できます
@@ -53,6 +54,16 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
   - `pull_request`にはPull Requestを`{"repo": "owner/repo", "number": 12}`の形で渡します。`GITHUB_MCP_TOKEN`を設定したときだけ出ます
   - 差分の追加行と文脈の行には、新しいファイルでの行番号をサーバーが振ります。指摘は「ファイル:行」の形で返ります
   - 秘密のファイルは`git_read`の`diff`と`github_read`の`pr_diff`と同じ判定で外します。入力の予算に入らないファイルは丸ごと落とし、名前を応答とプロンプトの両方に書きます
+- CIの失敗は`check_log`で調べます
+  - `github_read`の`check_log`は、Pull Requestのheadで失敗したチェック（`failure`、`timed_out`）ごとに、注釈と、GitHub Actionsのジョブのログの末尾200行を返します。行頭の時刻と色の制御文字は落とします
+  - ログには、GitHubの伏せきれなかった秘密も混ざりえます。Claudeに読ませたくないときは、`ollama_explain_error`に`check_log: {"repo": "owner/repo", "number": 12}`を渡します。ログはローカルのモデルにだけ渡り、応答には原因の候補だけが返ります
+  - ログのAPIは保存先へのリダイレクトを返します。サーバーはリダイレクトを自分でたどり、保存先にはトークンを送りません
+  - GitHubのAPIの呼び出しは、`GITHUB_API_TIMEOUT`（既定30秒）で打ち切ります
+- `ollama_review_code`に`structured: true`を付けると、指摘をJSON（`file`、`line`、`severity`、`problem`、`fix`、`uncertain`）で受けます
+  - Ollamaの`format`で出力の形を絞ります
+  - 渡していないファイルや、渡した行の範囲の外を指す指摘をサーバーが落とし、落とした数と理由を応答に書きます。差分では、番号を振った`@@`の範囲だけを通します
+  - 残った指摘は、これまでと同じ形の文章と、MCPの`structuredContent`の両方で返ります
+  - 既定は付けない（文章のまま）です。`outputSchema`は宣言しません。宣言すると、すべての応答に`structuredContent`が要るためです
   - これはトークンを節約しません。`content`の分はどちらにせよ払います。サーバーが読めるパスなら必ず`files`を使います
 - 渡せる量の上限は、文字数ではなくトークン数の目安で測ります。日本語のコメントが多いコードは1文字がほぼ1トークンになるためです
   - 既定の上限は約24000トークンで、コンテキストを32kトークンと見込んでいます。実際の長さはOllamaの設定（`OLLAMA_CONTEXT_LENGTH`、Modelfileの`PARAMETER num_ctx`）で決まり、サーバーからは見えません
@@ -141,6 +152,7 @@ Ollamaに作業を任せ、その結果をClaudeが確かめてから返すた�
 | `GIT_USER_NAME`、`GIT_USER_EMAIL`        | なし                                                           | commitに使う名前とメールアドレスです。commitするなら両方とも要ります                                                                              |
 | `GITHUB_MCP_TOKEN`                       | なし                                                           | GitHubのAPIに使うトークンです。fine-grainedを使い、対象のリポジトリを列挙します                                                                   |
 | `GITHUB_ALLOW_WRITE`                     | `false`                                                        | Pull Requestの作成とコメントを許すかどうかです。stdioでだけ効き、HTTPでは常に無効です                                                             |
+| `GITHUB_API_TIMEOUT`                     | `30000`                                                        | GitHubのAPIの1回の呼び出し（本文を読み終えるまで）の上限です（ミリ秒）。CIのログを読むときも使います                                              |
 | `AUDIT_LOG_DIR`                          | `docker-compose.yml`で設定                                     | 監査ログを1日1ファイルで書き出す先（コンテナーの中の絶対パス）です。空なら標準エラーにだけ出します。`FILE_ROOTS`の中は拒みます                   |
 | `AUDIT_RETENTION_DAYS`                   | `30`                                                           | 監査ログのファイルを残す日数です                                                                                                                   |
 
@@ -179,7 +191,7 @@ claude.aiから使うときは、Cloudflare TunnelとCloudflare Accessを前に�
 1. `.env`に`CF_ACCESS_TEAM_DOMAIN`とアプリの`CF_ACCESS_AUD`を書き、コンテナーを作り直します
 1. claude.aiの「設定」の「コネクタ」で、`https://<ホスト名>/mcp`をカスタムコネクタとして足します
 
-- claude.aiとClaude Desktopのリモートのコネクタは、1回の呼び出しを約240秒で打ち切ります。Cloudflareは応答が約100秒途切れると打ち切ります。長い生成はローカルで行います
+- claude.aiとClaude Desktopのリモートのコネクタは、1回の呼び出しを約240秒で打ち切ります。Cloudflareは応答が約100秒途切れると打ち切ります。長い生成は、次の「長い生成をジョブにする」を使うか、ローカルで行います
 - うまくつながらないときは[docs/troubleshooting.md](docs/troubleshooting.md)を見てください
 
 ### リモートでファイルを読む
@@ -197,7 +209,26 @@ HTTPでも、`files`引数と`list_files`を使えます。
 - ファイルの中身はこのPCのOllamaにだけ渡ります。ただし、Ollamaの出力はclaude.aiに返るため、Anthropicのサービスを通ります
 - `HTTP_ALLOW_FILES`を外したときも、ツールリストを更新します。更新しないと、Claudeがなくなったツールや引数を呼んで失敗します
 - 大きなファイルを14Bのモデルに読ませると、1回の呼び出しの上限（約240秒）を超えることがあります。そのときは`DEFAULT_MODEL`の7Bのモデルを使うか、ファイルを分けます
-- コネクタが約240秒で打ち切ったときは、途中まで生成された部分も返りません。リモートで主に使うなら、`OLLAMA_MAX_DURATION`を`200000`ほどに下げると、打ち切られる前に途中までの結果を返せます。ただし、同じコンテナーのstdioにも効きます
+- コネクタが約240秒で打ち切ったときは、途中まで生成された部分も返りません。長くなりそうな生成は、`background: true`でジョブにします（次の節）
+
+### 長い生成をジョブにする
+
+HTTPで保存（`OUTPUT_DIR`と`HTTP_ALLOW_WRITES=true`）が使えるときは、生成のツールに`background: true`を付けられます。
+対象は`ollama_chat`、`ollama_review_code`、`ollama_explain_error`です。
+付けると、受け付けた時点でジョブのIDを返します。
+生成はクライアントの打ち切りを越えて続き、結果は`OUTPUT_DIR`に書かれます。
+
+1. `background: true`を付けて呼びます。応答にジョブのIDが返ります
+1. `ollama_job`にIDを渡して、状態（待ち、生成中、完了、失敗）を確かめます。IDを省くと、自分のジョブの一覧が返ります
+1. 完了すると、保存先のパス、先頭と末尾の抜粋、`[ollama]`の行が返ります。全文は`read_file`で読みます
+
+- stdioでは使えません。クライアントが終わるとプロセスごと止まり、ジョブも消えるためです。stdioには打ち切りの問題もありません
+- ジョブは、ほかの呼び出しと同じ枠（`OLLAMA_MAX_CONCURRENCY`と`OLLAMA_MAX_QUEUE`）を使います。待ち行列が一杯なら、受け付けの時点で断ります
+- 生成中のジョブは、クライアントが切れても止めません。`OLLAMA_MAX_DURATION`で必ず終わります
+- 終わったジョブの記録は1時間で消えます。結果のファイルは`OUTPUT_DIR`に残ります
+- 記録はプロセスのメモリに持ちます。コンテナーを作り直すと記録は消えますが、ファイルは残ります
+- ほかの識別子（Accessのメールアドレスなど）のジョブは読めません
+- 監査ログには、受け付けの記録とは別に、終わったときの記録（ツール名に`:job`を付けたもの）が残ります
 
 ### 出力をファイルに保存する
 
@@ -257,7 +288,8 @@ SSHの鍵は要りません。
     | Contents: Read | `git_clone`です。pushもするならRead and write |
     | Pull requests: Read | `pr_list`、`pr_view`、`pr_diff`、`pr_comments`です。PRを作るならRead and write |
     | Issues: Read | `issue_list`、`issue_view`です。コメントするならRead and write |
-    | Checks: Read | `pr_checks`です |
+    | Checks: Read | `pr_checks`と`check_log`（注釈）です |
+    | Actions: Read | `check_log`（ログ）です。`ollama_explain_error`の`check_log`も使います |
 
 1. `.env`に`GITHUB_MCP_TOKEN=github_pat_...`と書き、`docker compose up -d`で作り直します
 1. `ollama_health`の`github api`が`enabled`になれば有効です
@@ -316,6 +348,7 @@ OllamaはGPUを1つずつ使うため、生成を並べて投げても待ち行�
 - `OLLAMA_MAX_CONCURRENCY`（既定2）までを同時に走らせ、それを超えた分は`OLLAMA_MAX_QUEUE`（既定8）まで待ち行列に並べます
 - 待ち行列も一杯のときは、待たせずにその場で断ります。Claudeを長く待たせず、早く判断できるようにするためです
 - 待っている間は、進捗の通知で「何件待ちか」を伝えます
+- 待ち時間まで含めて240秒を超えそうなときは、`background: true`でジョブにします
 - 今の状態は`ollama_health`の`concurrency`に出ます
 
 ## セキュリティ
@@ -445,6 +478,9 @@ npm test
 - 守るブランチへのpushと、それらをheadにしたPull Requestの作成を拒むこと
 - `git_read`の`diff`と`github_read`の`pr_diff`から、`files`が拒むのと同じ秘密のファイルが外れること（名前の変更、引用符で囲まれた名前を含む）
 - `ollama_review_code`の`git_diff`と`pull_request`で、差分がローカルのモデルへのプロンプトにだけ入り、秘密のファイルが入らないこと。振った行番号が新しいファイルの行番号と一致すること
+- `ollama_review_code`の`structured`で、渡していないファイルや範囲の外の行を指す指摘が落ち、付けたときだけ`format`と`structuredContent`が使われること
+- `check_log`が失敗したチェックの注釈とログの末尾だけを返し、ログの保存先にトークンを送らないこと。`ollama_explain_error`の`check_log`でログが応答に返らないこと。GitHubが応答を返さないとき`GITHUB_API_TIMEOUT`で打ち切ること
+- `background: true`の呼び出しがすぐにIDを返し、クライアントが切れたあとも生成が続いて保存されること。ほかの識別子からジョブを読めないこと、終わってから1時間で記録が消えること、stdioには出ないこと
 - 取得したリポジトリの`.git/config`に許可していない鍵（`core.fsmonitor`、`core.hooksPath`、`diff.external`、`include.path`など）があれば、gitを動かさずに拒むこと
 - 許可リストを通り抜けても、フックと`core.fsmonitor`がコマンドの側の設定で止まること
 - `github_read`と`git_read`の`log`、`diff`、`show`の結果に第三者の文章だという断り書きが付き、`status`と空の差分には付かないこと
