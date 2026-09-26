@@ -270,7 +270,7 @@ GitHubが認証のない要求に404を返すためで、名前の打ち間違�
 ```
 
 - 出力先は標準エラーです。stdioのとき標準出力はMCPの通信路なので、そちらには出しません
-- `identity`は、Cloudflare AccessのJWTの`email`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
+- `identity`は、Cloudflare AccessのJWTの`email`、サービストークンなら`service:<クライアントID>`、静的なトークンなら`token`、stdioなら`stdio`です。認証がない構成では`anonymous`になります
 - `args`には記録してよい鍵だけを残します。`prompt`、`code`、`system`、`context`、`message`、`body`、`inline_files`の中身は出しません
   - 渡したファイルのパス（`files`と`paths`）は残します。何をローカルのモデルに渡したかは、監査でいちばん知りたいことだからです
   - `inline_files`は件数だけにします。名前と中身のどちらも呼び出し側が決めるためです
@@ -419,6 +419,7 @@ npm test
 - 同時に走らせる数の上限と、待ち行列が一杯のときに断ること
 - すでに中断された呼び出しを待ち行列に並ばせないことと、枠を渡す間にも上限を超えて走らないこと
 - HTTPの認証（静的なトークン、Cloudflare AccessのJWT、メールアドレスの絞り込み）と、エラーの形
+- Cloudflare Accessの鍵の取得を、同時に届いた知らない`kid`のJWTで分け合い、失敗した直後は取り直さないこと
 - クライアントからの中断と、stdioのstdinが閉じたときに、Ollamaへの呼び出しが止まること
 - `OLLAMA_MAX_DURATION`を超えたときに、途中までの出力を警告付きで返し、Ollamaへの呼び出しも止まること
 - HTTPの`requestTimeout`より長い生成が、途中で切れずに最後まで返ること
