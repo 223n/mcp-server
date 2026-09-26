@@ -518,3 +518,24 @@ test("秘密のファイルの区画の途中で切り詰められても、切�
 
   assert.match(diff, /excluded 1 file\(s\) that may contain secrets: \.env/);
 });
+
+test("log、diff、show には第三者の文章だという断り書きを添え、status と空の差分には添えない", async () => {
+  const { THIRD_PARTY_NOTE } = await import("../src/tools/third-party.ts");
+
+  const dir = seedRepo("223n/notes");
+
+  for (const op of ["log", "show"] as const) {
+    assert.ok((await gitRead({ repo: "223n/notes", op })).endsWith(THIRD_PARTY_NOTE), op);
+  }
+
+  // 変更が無ければ差分は空。空の応答に断り書きだけを返さない
+  assert.equal(await gitRead({ repo: "223n/notes", op: "diff" }), "");
+
+  writeFileSync(path.join(dir, "README.md"), "# changed\n");
+
+  assert.ok((await gitRead({ repo: "223n/notes", op: "diff" })).endsWith(THIRD_PARTY_NOTE));
+
+  for (const op of ["status", "branches"] as const) {
+    assert.ok(!(await gitRead({ repo: "223n/notes", op })).includes(THIRD_PARTY_NOTE), op);
+  }
+});

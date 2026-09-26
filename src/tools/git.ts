@@ -18,6 +18,8 @@ import {
 
 import { excludeSensitiveSections, exclusionNote, isSensitivePath } from "./sensitive.ts";
 
+import { thirdParty } from "./third-party.ts";
+
 /** "owner/repo" を分解し、取得先のディレクトリまで決めたもの */
 type RepoTarget = { owner: string; repo: string; slug: string; dir: string };
 
@@ -461,21 +463,22 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
     case "status":
       return await run(["status", "--short", "--branch"]);
 
+    // log、diff、show はコミットのメッセージや他人の書いたコードを返すため、断り書きを添える
     case "log":
-      return await run([
+      return thirdParty(await run([
         "log",
         `--max-count=${Math.min(args.limit ?? 20, 200)}`,
         "--date=iso",
         "--pretty=format:%h %ad %an %s",
         ...(args.ref ? [checkValue(args.ref, "ref")] : []),
-      ]);
+      ]));
 
     case "diff":
-      return await readDiff(run, args);
+      return thirdParty(await readDiff(run, args));
 
     case "show":
       // 中身は返さない。git show <ref>:<path> は files.ts の拒否リストを通らないため
-      return await run([
+      return thirdParty(await run([
         "show",
         "--no-ext-diff",
         "--no-textconv",
@@ -483,7 +486,7 @@ export async function gitRead(args: GitReadArgs, ctx?: ToolContext): Promise<str
         "--pretty=format:%h %ad %an%n%n%s%n%n%b",
         "--date=iso",
         checkValue(args.ref ?? "HEAD", "ref"),
-      ]);
+      ]));
 
     case "branches":
       return await run(["branch", "--all", "--format=%(refname:short) %(objectname:short)"]);
