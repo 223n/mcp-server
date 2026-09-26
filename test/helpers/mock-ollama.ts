@@ -17,6 +17,7 @@ export type MockState = { chats: MockChat[]; aborted: number };
 // プロンプトに含まれる語で振る舞いを変える。
 //   MOCK_SLOW   200 ミリ秒ごとに 50 回に分けて返す（中断とタイムアウトの試験用）
 //   MOCK_ERROR  HTTP 500 とエラーの JSON を返す
+// モデルの名前が "missing:model" なら、入っていないモデルとして HTTP 404 を返す
 // 応答の最初の断片には、受け取ったファイルの数（"### File:" の数）を入れる
 export async function startMockOllama() {
   const state: MockState = { chats: [], aborted: 0 };
@@ -55,6 +56,10 @@ export async function startMockOllama() {
 
       if (prompt.includes("MOCK_ERROR")) {
         return sendJson(res, 500, { error: "mock failure" });
+      }
+
+      if (body.model === "missing:model") {
+        return sendJson(res, 404, { error: 'model "missing:model" not found, try pulling it first' });
       }
 
       const slow = prompt.includes("MOCK_SLOW");

@@ -148,6 +148,59 @@ describe("認証なしの HTTP", () => {
     }
   });
 
+  test("モデルの説明は設定から組み立て、特定のモデルの名前を決め打ちしない", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const { tools } = await client.listTools();
+
+      const described = JSON.stringify(tools);
+
+      assert.doesNotMatch(described, /nucbox/);
+
+      // DEFAULT_MODEL は mock:latest、DEEP_MODEL は既定の qwen2.5-coder:14b
+      assert.match(described, /\\"fast\\" = mock:latest/);
+
+      assert.match(described, /\\"deep\\" = qwen2\.5-coder:14b/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("fast と deep の別名を、設定したモデルに読み替える", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const deep = await client.callTool({ name: "ollama_chat", arguments: { prompt: "hello", model: "deep" } });
+
+      assert.ok(!deep.isError, text(deep));
+
+      assert.equal(ollama.state.chats.at(-1)?.model, "qwen2.5-coder:14b");
+
+      await client.callTool({ name: "ollama_review_code", arguments: { code: "x = 1", model: "fast" } });
+
+      assert.equal(ollama.state.chats.at(-1)?.model, "mock:latest");
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("入っていないモデルを指定されたら、入っているモデルの一覧を添えて返す", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = await client.callTool({ name: "ollama_chat", arguments: { prompt: "hello", model: "missing:model" } });
+
+      assert.equal(result.isError, true);
+
+      assert.match(text(result), /not found/);
+
+      assert.match(text(result), /Installed models: mock:latest/);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("クライアントが中断すると Ollama への呼び出しも止まる", async () => {
     const client = await connect(server.url);
 

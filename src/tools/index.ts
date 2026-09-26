@@ -57,7 +57,8 @@ const modelArg = (fallback: string) =>
     .max(200)
     .optional()
     .describe(
-      `Ollama model name. Default: ${fallback}. "nucbox-fast:latest" (qwen2.5-coder 7B) is quicker; "qwen2.5-coder:14b" (= nucbox-deep) is stronger. Call ollama_list_models for the full list.`,
+      // モデルの名前は PC ごとに違う。決め打ちで書くと、入っていないモデルを勧めることになるため、設定から組み立てる
+      `Ollama model name, or an alias: "fast" = ${config.defaultModel} (quicker), "deep" = ${config.deepModel} (stronger). Default: ${fallback}. Call ollama_list_models for the installed models.`,
     );
 
 // git と GitHub のツール。書き込み系は local（stdio）でだけ登録する
@@ -379,7 +380,7 @@ export function buildTools({
       description:
         "Delegate a self-contained text task to a local LLM running on the user's own GPU via Ollama (no API cost, private). " +
         "Good for first drafts, summaries, translations, boilerplate, test scaffolding, brainstorming and bulk text processing. " +
-        "The local model (qwen2.5-coder 7B/14B, 32k context) is much weaker than Claude: give it complete context in one prompt and verify its output before relying on it. " +
+        "The local model is much weaker than Claude: give it complete context in one prompt and verify its output before relying on it. " +
         "Typical latency 5-90 s." +
         filesHint +
         saveHint,
@@ -418,7 +419,7 @@ export function buildTools({
       title: "Ollama: code review",
 
       description:
-        "Get a second-opinion code review from the local LLM (default qwen2.5-coder 14B). " +
+        `Get a second-opinion code review from the local LLM (default ${config.deepModel}). ` +
         "Returns findings as '[severity] line: problem -> fix'. Findings are often wrong or shallow: treat them as leads and confirm each one in the source before reporting." +
         filesHint,
 
@@ -455,7 +456,7 @@ export function buildTools({
       title: "Ollama: explain an error",
 
       description:
-        "Ask the local LLM (default qwen2.5-coder 14B) to analyse an error message or log and list likely causes with checks and fixes." +
+        `Ask the local LLM (default ${config.deepModel}) to analyse an error message or log and list likely causes with checks and fixes.` +
         filesHint,
 
       inputSchema: z.strictObject({
