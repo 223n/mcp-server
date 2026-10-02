@@ -30,7 +30,11 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --omit=dev && npm cache clean --force
+# 実行時に使うのは node だけなので、依存を入れたら、ベースイメージに同梱の npm と npx を消す。
+# 同梱の npm の依存（brace-expansion、undici など）に脆弱性が見つかっても、その版は npm とベースイメージが
+# 上げるまで変えられない。使わないものを残して、Trivy の検査が落ち続けることを避ける
+RUN npm ci --omit=dev && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY . .
 
