@@ -11,17 +11,15 @@ ENV NODE_ENV=production
 # 取得したリポジトリの .git/config（local）はこれでも読まれるため、src/git/exec.ts がコマンドの側の設定で
 # 危険な鍵を打ち消し、src/tools/git.ts が操作の前に鍵を許可リストで確かめる。
 # safe.directory は、Windows のバインドマウントが別の所有者に見えるために要る。
-# protocol の指定で ext::、file://、git://、ssh:// を塞ぎ、https だけを通す
+# protocol の指定で ext::、file://、git://、ssh:// を塞ぎ、https だけを通す。
+#
+# ファイルは git config に書かせる。printf の %s は引数の \t を展開しないため、手で書くと
+# 「\tdirectory = *」がそのまま残る。git はこれを「bad config line 2」として読めず、git の操作がすべて失敗する
 RUN apk add --no-cache git \
     && mkdir -p /etc/git /tmp/git-home \
-    && printf '%s\n' \
-       '[safe]' \
-       '\tdirectory = *' \
-       '[protocol]' \
-       '\tallow = never' \
-       '[protocol "https"]' \
-       '\tallow = always' \
-       > /etc/git/server.gitconfig \
+    && git config --file /etc/git/server.gitconfig safe.directory '*' \
+    && git config --file /etc/git/server.gitconfig protocol.allow never \
+    && git config --file /etc/git/server.gitconfig protocol.https.allow always \
     && chown node:node /tmp/git-home
 
 # 監査ログの書き出し先。docker-compose.yml が名前付きボリュームをここにマウントする。
@@ -32,7 +30,11 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --omit=dev && npm cache clean --force
+# 実行時に使うのは node だけなので、依存を入れたら、ベースイメージに同梱の npm と npx を消す。
+# 同梱の npm の依存（brace-expansion、undici など）に脆弱性が見つかっても、その版は npm とベースイメージが
+# 上げるまで変えられない。使わないものを残して、Trivy の検査が落ち続けることを避ける
+RUN npm ci --omit=dev && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY . .
 
