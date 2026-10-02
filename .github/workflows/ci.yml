@@ -8,7 +8,7 @@ name: CI
 #   lint-workflows  ワークフローの構文と型（actionlint）
 #   zizmor          ワークフローの安全性（zizmor）。アクションの SHA 固定、権限、危険な書き方を見る
 #   test            サーバーの試験（npm test）。Node 22 と 26 で動かす
-#   docker          Docker イメージを作り、起動して HTTP と stdio の応答を確かめる。
+#   docker          Docker イメージを作り、起動して HTTP と stdio の応答と、git が設定ファイルを読めることを確かめる。
 #                   あわせて Trivy でイメージの脆弱性を見る（apk のパッケージは Dependabot が追わないため）
 #
 # プロジェクト固有のビルドやテストは、これらと並ぶジョブとして足す。
@@ -226,6 +226,17 @@ jobs:
             echo "::error::the root filesystem is writable; --read-only did not take effect"
             exit 1
           fi
+
+          # サーバーが git に読ませる設定ファイルを、git が読めること。読めないと git の操作がすべて失敗する。
+          # 試験は手元の git で動くため、このファイルを読むのはイメージの中だけになる。
+          # https 以外を塞ぐ設定が入っていることも、ここで確かめる
+          git_config=$(docker exec \
+            --env GIT_CONFIG_SYSTEM=/etc/git/server.gitconfig --env GIT_CONFIG_GLOBAL=/dev/null \
+            "${CONTAINER}" git config --system --list)
+          echo "git: ${git_config}"
+          grep --quiet --fixed-strings --line-regexp 'safe.directory=*' <<< "${git_config}"
+          grep --quiet --fixed-strings --line-regexp 'protocol.allow=never' <<< "${git_config}"
+          grep --quiet --fixed-strings --line-regexp 'protocol.https.allow=always' <<< "${git_config}"
 
           initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
 
