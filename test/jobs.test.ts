@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { after, before, test } from "node:test";
 
+import type { ProgressInfo } from "../src/types.ts";
+
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
 // 手元の .env を読ませないため、設定を読み込む前に作業ディレクトリを移す
@@ -28,9 +30,9 @@ type Deferred = { resolve: (text: string) => void; reject: (error: Error) => voi
 
 // 終わらせる時を試験が決められる生成
 function deferredRun() {
-  const handle: Partial<Deferred> & { progress?: (info: { chunks: number; elapsedMs: number; queued?: number }) => void } = {};
+  const handle: Partial<Deferred> & { progress?: (info: ProgressInfo) => void } = {};
 
-  const run = (onProgress: (info: { chunks: number; elapsedMs: number; queued?: number }) => void) => {
+  const run = (onProgress: (info: ProgressInfo) => void) => {
     handle.progress = onProgress;
 
     return new Promise<string>((resolve, reject) => {
@@ -66,7 +68,14 @@ test("受け付けたジョブは、待ち、生成中、完了と状態が変�
 
   handle.progress?.({ chunks: 0, elapsedMs: 0 });
 
-  handle.progress?.({ chunks: 12, elapsedMs: 10000 });
+  // 考える過程を持つモデルは、答えの前に thinking だけを流す。止まって見えないよう、その数を出す
+  handle.progress?.({ chunks: 0, thinkingChunks: 40, elapsedMs: 10000 });
+
+  withIdentity("alice@example.com", () => {
+    assert.match(text(ollamaJob({ id })), /running for \d+ s, thinking \(40 chunks so far\)/);
+  });
+
+  handle.progress?.({ chunks: 12, thinkingChunks: 40, elapsedMs: 20000 });
 
   withIdentity("alice@example.com", () => {
     assert.match(text(ollamaJob({ id })), /running for \d+ s, 12 chunks so far/);
