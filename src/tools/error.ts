@@ -6,7 +6,7 @@ import { config } from "../config/config.ts";
 
 import { readCheckLogs } from "./github.ts";
 
-import { runChatOrJob } from "./ollama.ts";
+import { DEEP_MAX_TOKENS, runChatOrJob } from "./ollama.ts";
 
 /** ollama_explain_error の引数。src/tools/index.ts の inputSchema と対で保つこと */
 export type ExplainErrorArgs = {
@@ -73,7 +73,7 @@ ${args.context ? `\n補足情報:\n\n${args.context}` : ""}
 
       temperature: 0.2,
 
-      maxTokens: args.max_tokens ?? 1536,
+      maxTokens: args.max_tokens ?? DEEP_MAX_TOKENS,
 
       save: args.save_output ?? false,
 

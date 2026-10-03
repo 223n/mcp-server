@@ -82,6 +82,15 @@ const ASSUMED_CONTEXT = 32768;
 // 渡すファイル以外（利用者の指示、system プロンプト、チャットの書式）に残しておく量
 const CONTEXT_MARGIN = 2048;
 
+/**
+ * DEEP_MODEL を使うツール（レビュー、エラーの説明）の、出力の上限の既定。
+ *
+ * 考える過程を持つモデル（gpt-oss など）は、その過程も num_predict に数える。
+ * gpt-oss:20b はレビュー 1 件で、答えの前に 1,000〜2,000 トークンを考えに使った。
+ * 上限が小さいと、答えを書く前に打ち切られる。持たないモデルは自分で止まるため、大きくしても害は無い
+ */
+export const DEEP_MAX_TOKENS = 8192;
+
 /** 渡すファイルに使ってよい量。OLLAMA_NUM_CTX を設定したときは、そこから出力の分と余白を引く */
 export function inputBudget(maxTokens: number | undefined): number {
   if (!config.ollamaNumCtx) {

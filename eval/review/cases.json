@@ -1,7 +1,10 @@
 {
   "description": "ollama_review_code の誤指摘と見落としを測る材料。cases/<id>/ の .diff は、本番の numberDiff で行番号を振った差分の本文で、ファイルの名前は元のパスに .diff を足したもの。bug の lines は、新しいファイルでの行番号（.diff の左側の番号）。",
   "cases": [
-    { "id": "p1-clean", "kind": "clean", "language": "TypeScript", "note": "1 から数えるページ番号から offset を求める。範囲の外は丸める" },
+    {
+      "id": "p1-clean", "kind": "clean", "language": "TypeScript", "note": "1 から数えるページ番号から offset を求める。範囲の外は丸める",
+      "known": [{ "file": "src/pagination.ts", "lines": [16, 20], "summary": "total が NaN のとき offset が NaN になり、注釈の「数でない値は丸める」と食い違う。材料を作ったときの見落としで、gpt-oss:20b が見つけた。この指摘は誤指摘に数えない" }]
+    },
     {
       "id": "p1-bug", "kind": "bug", "language": "TypeScript",
       "bugs": [{ "file": "src/pagination.ts", "lines": [20, 20], "summary": "page は 1 から数えるのに offset を current * limit にしており、1 ページ目を飛ばす。(current - 1) * limit が正しい" }]

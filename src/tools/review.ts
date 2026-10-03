@@ -18,7 +18,7 @@ import { readCloneDiff } from "./git.ts";
 
 import { readPullDiff } from "./github.ts";
 
-import { runChatOrJob } from "./ollama.ts";
+import { DEEP_MAX_TOKENS, runChatOrJob } from "./ollama.ts";
 
 function codeBlock(code: string): string {
   const body = numberLines(code.replace(/\r\n/g, "\n").split("\n"));
@@ -173,7 +173,7 @@ ${args.code ? codeBlock(args.code) : ""}
 
       temperature: 0.2,
 
-      maxTokens: args.max_tokens ?? 1536,
+      maxTokens: args.max_tokens ?? DEEP_MAX_TOKENS,
 
       save: args.save_output ?? false,
 

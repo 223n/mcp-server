@@ -30,7 +30,7 @@ import { createHealthTool } from "./health.ts";
 
 import { ollamaJob } from "./jobs.ts";
 
-import { ollamaChatTool, ollamaListModels } from "./ollama.ts";
+import { DEEP_MAX_TOKENS, ollamaChatTool, ollamaListModels } from "./ollama.ts";
 
 import { outputLabel, outputReady } from "./output.ts";
 
@@ -519,7 +519,7 @@ export function buildTools({
 
         model: modelArg(config.deepModel),
 
-        max_tokens: maxTokensArg(1536),
+        max_tokens: maxTokensArg(DEEP_MAX_TOKENS),
       }),
 
       // pull_request は GitHub を読みに行く
@@ -577,7 +577,7 @@ export function buildTools({
 
         model: modelArg(config.deepModel),
 
-        max_tokens: maxTokensArg(1536),
+        max_tokens: maxTokensArg(DEEP_MAX_TOKENS),
       }),
 
       // check_log は GitHub を読みに行く
