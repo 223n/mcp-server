@@ -122,10 +122,11 @@ describe("認証なしの HTTP", () => {
     test(`${mode}: structured を付けたレビューだけが structuredContent を返す`, async () => {
       const client = await connect(server.url, { mode });
 
+      // evidence と scenario を書かないモデルの出力も、そのまま受け付ける
       const output = JSON.stringify({
         findings: [
-          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする", uncertain: false },
-          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "", uncertain: true },
+          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする" },
+          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "" },
         ],
       });
 

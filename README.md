@@ -30,7 +30,7 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
 | ツール                 | 内容                                                                                                                      | 既定のモデル    |
 |------------------------|---------------------------------------------------------------------------------------------------------------------------|-----------------|
 | `ollama_chat`          | 下書き、要約、翻訳などの作業を任せます。`profile`でphp、docker、git、code_reviewの定型の指示を選べます                    | `DEFAULT_MODEL` |
-| `ollama_review_code`   | コードを確かめます。行番号付きで「重大度、行、問題、改善案」を返します。取得したリポジトリとPull Requestの差分も確かめられます | `DEEP_MODEL`    |
+| `ollama_review_code`   | コードを確かめます。行番号付きで「重大度、行、問題、起きる条件、改善案」を返します。取得したリポジトリとPull Requestの差分も確かめられます | `DEEP_MODEL`    |
 | `ollama_explain_error` | エラーやログの原因の候補と対処を返します                                                                                  | `DEEP_MODEL`    |
 | `ollama_list_models`   | 入っているモデルの一覧を返します                                                                                          | -               |
 | `ollama_health`        | Ollamaが動いているかと、サーバーの設定を返します                                                                          | -               |
@@ -59,7 +59,13 @@ claude.aiとClaude Desktopのカスタムコネクタは、このPCではなくA
   - ログには、GitHubの伏せきれなかった秘密も混ざりえます。Claudeに読ませたくないときは、`ollama_explain_error`に`check_log: {"repo": "owner/repo", "number": 12}`を渡します。ログはローカルのモデルにだけ渡り、応答には原因の候補だけが返ります
   - ログのAPIは保存先へのリダイレクトを返します。サーバーはリダイレクトを自分でたどり、保存先にはトークンを送りません
   - GitHubのAPIの呼び出しは、`GITHUB_API_TIMEOUT`（既定30秒）で打ち切ります
-- `ollama_review_code`に`structured: true`を付けると、指摘をJSON（`file`、`line`、`severity`、`problem`、`fix`、`uncertain`）で受けます
+- `ollama_review_code`は、渡したコードから根拠を示せる不具合（誤った動作、セキュリティの穴、仕様との食い違い）だけを、最大5件返します
+  - 好み、命名、可読性、改善の提案、見えないコードについての推測は返しません。ローカルのモデルは、確認する観点を並べると観点ごとに指摘をこしらえ、コードがすでに対処していることまで指摘するためです
+  - 指摘には、問題が起きる条件を添えさせます。示せない候補は、モデルに捨てさせます
+  - `focus`には、具体的な1〜2点（「SQLインジェクション」「fetchAllの再試行」など）を渡します。「セキュリティ、国際化、エラー処理」のように観点を並べないでください
+  - 測り方と材料は`eval/review/`にあります。`qwen3-coder:30b`では、誤った指摘が45件から13件に減りました
+- `ollama_review_code`に`structured: true`を付けると、指摘をJSON（`file`、`line`、`severity`、`evidence`、`scenario`、`problem`、`fix`）で受けます
+  - `evidence`は問題の行の写し、`scenario`は問題が起きる入力や状態です
   - Ollamaの`format`で出力の形を絞ります
   - 渡していないファイルや、渡した行の範囲の外を指す指摘をサーバーが落とし、落とした数と理由を応答に書きます。差分では、番号を振った`@@`の範囲だけを通します
   - 残った指摘は、これまでと同じ形の文章と、MCPの`structuredContent`の両方で返ります

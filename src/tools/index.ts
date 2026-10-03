@@ -483,7 +483,7 @@ export function buildTools({
 
       description:
         `Get a second-opinion code review from the local LLM (default ${config.deepModel}). ` +
-        "Returns findings as '[severity] line: problem -> fix'. Findings are often wrong or shallow: treat them as leads and confirm each one in the source before reporting." +
+        "Returns at most 5 findings as '[severity] line: problem (when it happens) -> fix', or '指摘なし'. Findings are often wrong or shallow: treat them as leads and confirm each one in the source before reporting." +
         filesHint +
         diffHint,
 
@@ -504,7 +504,7 @@ export function buildTools({
           .boolean()
           .optional()
           .describe(
-            "Ask the model for JSON findings ({file, line, severity, problem, fix, uncertain}) and drop the ones that point at files or lines that were not passed; the dropped count is reported. The findings also come back as structuredContent. Default false (plain text).",
+            "Ask the model for JSON findings ({file, line, severity, evidence, scenario, problem, fix}) and drop the ones that point at files or lines that were not passed; the dropped count is reported. The findings also come back as structuredContent. Default false (plain text).",
           ),
 
         language: z.string().max(100).optional(),
@@ -513,7 +513,9 @@ export function buildTools({
           .string()
           .max(1000)
           .optional()
-          .describe("What to concentrate on, e.g. 'SQL injection' or 'N+1 queries'."),
+          .describe(
+            "One or two concrete risks to look at, e.g. 'SQL injection' or 'the retry loop in fetchAll'. Do not list generic categories (security, i18n, error handling, ...): the model tends to invent a finding for each one. Omit it to look for bugs and security holes.",
+          ),
 
         model: modelArg(config.deepModel),
 
