@@ -21,6 +21,7 @@ export type MockState = { chats: MockChat[]; aborted: number };
 // モデルの名前が "missing:model" なら、入っていないモデルとして HTTP 404 を返す
 //   MOCK_FULL_CONTEXT  prompt_eval_count を num_ctx（無ければ 32768）ちょうどにする（上限に張り付いた警告の試験用）
 //   MOCK_JSON:<文字列>  その行の残りを、そのままモデルの出力として 1 回で返す（構造化したレビューの試験用）
+//   MOCK_THINK_ONLY  考える過程（thinking）だけを流し、答えを書かずに done_reason=length で終える
 //   MOCK_HOLD:<名前>  試験が release(名前) を呼ぶまで応答を止め、そのあと普通に返す（待ち行列の試験用）
 // 応答の最初の断片には、受け取ったファイルの数（"### File:" の数）を入れる
 export async function startMockOllama() {
@@ -95,6 +96,21 @@ export async function startMockOllama() {
 
         res.end(
           `${JSON.stringify({ model: body.model, done: true, done_reason: "stop", prompt_eval_count: 10, eval_count: 1 })}\n`,
+        );
+
+        return;
+      }
+
+      // 考える過程を持つモデルが、考えるだけで num_predict を使い切ったときの形
+      if (prompt.includes("MOCK_THINK_ONLY")) {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+
+        for (let i = 0; i < 3; i += 1) {
+          res.write(`${JSON.stringify({ message: { role: "assistant", content: "", thinking: `step${i} ` }, done: false })}\n`);
+        }
+
+        res.end(
+          `${JSON.stringify({ model: body.model, done: true, done_reason: "length", prompt_eval_count: 10, eval_count: 3 })}\n`,
         );
 
         return;

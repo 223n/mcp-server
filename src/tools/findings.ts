@@ -17,9 +17,15 @@ export type Finding = {
   file: string;
   line: number;
   severity: Severity;
+
+  /** 問題の行の写し。モデルにその行を読み直させるために書かせる */
+  evidence: string;
+
+  /** 問題が起きる入力や状態。書けない候補は捨てるようプロンプトで頼んでいる */
+  scenario: string;
+
   problem: string;
   fix: string;
-  uncertain: boolean;
 };
 
 /** 落とした 1 件。structuredContent の dropped に並ぶ */
@@ -47,14 +53,16 @@ export const FINDINGS_SCHEMA: Record<string, unknown> = {
 
           severity: { type: "string", enum: [...SEVERITIES] },
 
+          evidence: { type: "string" },
+
+          scenario: { type: "string" },
+
           problem: { type: "string" },
 
           fix: { type: "string" },
-
-          uncertain: { type: "boolean" },
         },
 
-        required: ["file", "line", "severity", "problem", "fix", "uncertain"],
+        required: ["file", "line", "severity", "evidence", "scenario", "problem", "fix"],
       },
     },
   },
@@ -62,7 +70,7 @@ export const FINDINGS_SCHEMA: Record<string, unknown> = {
   required: ["findings"],
 };
 
-// モデルが並べすぎたときに読む上限。プロンプトでは 10 件までと頼んでいる
+// モデルが並べすぎたときに読む上限。プロンプトでは 5 件までと頼んでいる
 const MAX_FINDINGS = 20;
 
 const MAX_TEXT_CHARS = 2000;
@@ -146,6 +154,8 @@ function readItem(item: unknown): Candidate {
     return { dropped: { file, line, reason: "malformed" } };
   }
 
+  const text = (value: unknown): string => (typeof value === "string" ? clip(value.trim()) : "");
+
   return {
     finding: {
       file,
@@ -154,21 +164,24 @@ function readItem(item: unknown): Candidate {
 
       severity,
 
+      // 写しは行頭の字下げも含めて受け取る。読み手が元の行と見比べられるようにする
+      evidence: typeof record.evidence === "string" ? clip(record.evidence) : "",
+
+      scenario: text(record.scenario),
+
       problem: clip(problem),
 
-      fix: clip(typeof record.fix === "string" ? record.fix.trim() : ""),
-
-      uncertain: record.uncertain === true,
+      fix: text(record.fix),
     },
   };
 }
 
 function renderFinding(finding: Finding): string {
+  const scenario = finding.scenario ? `（起きる条件: ${finding.scenario}）` : "";
+
   const fix = finding.fix ? ` → ${finding.fix}` : "";
 
-  const uncertain = finding.uncertain ? "（要確認）" : "";
-
-  return `- [重大度: ${SEVERITY_LABEL[finding.severity]}] ${finding.file}:${finding.line}: ${finding.problem}${fix}${uncertain}`;
+  return `- [重大度: ${SEVERITY_LABEL[finding.severity]}] ${finding.file}:${finding.line}: ${finding.problem}${scenario}${fix}`;
 }
 
 function describeDropped(dropped: DroppedFinding): string {

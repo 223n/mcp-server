@@ -75,7 +75,14 @@ test("受け付けたジョブは、待ち、生成中、完了と状態が変�
 
   handle.progress?.({ chunks: 0, elapsedMs: 0 });
 
-  handle.progress?.({ chunks: 12, elapsedMs: 10000 });
+  // 考える過程を持つモデルは、答えの前に thinking だけを流す。止まって見えないよう、その数を出す
+  handle.progress?.({ chunks: 0, thinkingChunks: 40, elapsedMs: 10000 });
+
+  withIdentity("alice@example.com", () => {
+    assert.match(text(ollamaJob({ id })), /running for \d+ s, thinking \(40 chunks so far\)/);
+  });
+
+  handle.progress?.({ chunks: 12, thinkingChunks: 40, elapsedMs: 20000 });
 
   withIdentity("alice@example.com", () => {
     assert.match(text(ollamaJob({ id })), /running for \d+ s, 12 chunks so far/);

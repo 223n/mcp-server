@@ -32,6 +32,9 @@ type Job = {
   finishedAt?: number;
   chunks: number;
 
+  /** 考える過程として届いた断片の数。答えの断片は chunks に数える */
+  thinkingChunks: number;
+
   /** 枠を待っているときの、自分より前に並んでいる数。0 なら次に動く */
   ahead?: number;
 
@@ -120,12 +123,14 @@ export function startJob(
     createdAt: now,
 
     chunks: 0,
+
+    thinkingChunks: 0,
   };
 
   jobs.set(job.id, job);
 
   // 枠を待っている間は ahead に前の数が入る（0 なら次に動く）。それ以外の知らせは、生成が始まったことを表す
-  const onProgress: ProgressReporter = ({ chunks, ahead }) => {
+  const onProgress: ProgressReporter = ({ chunks, thinkingChunks, ahead }) => {
     if (ahead !== undefined) {
       job.state = "queued";
 
@@ -141,6 +146,8 @@ export function startJob(
     job.ahead = undefined;
 
     job.chunks = chunks;
+
+    job.thinkingChunks = thinkingChunks ?? 0;
   };
 
   // 識別子は、受け付けた呼び出しの文脈を引き継ぐ（AsyncLocalStorage）
@@ -183,8 +190,15 @@ function statusLine(job: Job, now: number): string {
     case "queued":
       return `queued${queuePosition(job.ahead)}, ${seconds(now - job.createdAt)} s since accepted`;
 
-    case "running":
-      return `running for ${seconds(now - (job.startedAt ?? job.createdAt))} s, ${job.chunks} chunks so far`;
+    case "running": {
+      // 考える過程を持つモデルは、答えを書き始めるまで数分かかる。止まっていないことを示す
+      const progress =
+        job.chunks === 0 && job.thinkingChunks > 0
+          ? `thinking (${job.thinkingChunks} chunks so far)`
+          : `${job.chunks} chunks so far`;
+
+      return `running for ${seconds(now - (job.startedAt ?? job.createdAt))} s, ${progress}`;
+    }
 
     case "done":
       return `done in ${seconds((job.finishedAt ?? now) - job.createdAt)} s`;

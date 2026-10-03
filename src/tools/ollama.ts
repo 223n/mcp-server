@@ -47,7 +47,7 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
 
   let last = -1;
 
-  return ({ chunks, ahead }) => {
+  return ({ chunks, thinkingChunks, ahead }) => {
     const progress = Math.max(last + 1, Math.round((Date.now() - started) / 1000));
 
     last = progress;
@@ -64,9 +64,11 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
           message:
             ahead !== undefined
               ? `Waiting for a free slot on this server (${ahead === 0 ? "next in line" : `${ahead} ahead`})…`
-              : chunks === 0
-                ? "Waiting for Ollama (queued / loading model / reading prompt)…"
-                : `Ollama is generating… ${chunks} chunks so far`,
+              : chunks > 0
+                ? `Ollama is generating… ${chunks} chunks so far`
+                : thinkingChunks
+                  ? `The model is thinking before it answers… ${thinkingChunks} chunks so far`
+                  : "Waiting for Ollama (queued / loading model / reading prompt)…",
         },
       })
       .catch(() => {});
@@ -94,6 +96,15 @@ const ASSUMED_CONTEXT = 32768;
 // 渡すファイル以外（利用者の指示、system プロンプト、チャットの書式）に残しておく量
 const CONTEXT_MARGIN = 2048;
 
+/**
+ * DEEP_MODEL を使うツール（レビュー、エラーの説明）の、出力の上限の既定。
+ *
+ * 考える過程を持つモデル（gpt-oss など）は、その過程も num_predict に数える。
+ * gpt-oss:20b はレビュー 1 件で、答えの前に 1,000〜2,000 トークンを考えに使った。
+ * 上限が小さいと、答えを書く前に打ち切られる。持たないモデルは自分で止まるため、大きくしても害は無い
+ */
+export const DEEP_MAX_TOKENS = 8192;
+
 /** 渡すファイルに使ってよい量。OLLAMA_NUM_CTX を設定したときは、そこから出力の分と余白を引く */
 export function inputBudget(maxTokens: number | undefined): number {
   if (!config.ollamaNumCtx) {
@@ -111,7 +122,12 @@ function warningsFor(result: ChatResult): string[] {
   }
 
   if (result.doneReason === "length") {
-    warnings.push("WARNING: output was cut off by max_tokens; the answer is incomplete.");
+    // 考える過程も num_predict に数えるため、考えるだけで上限を使い切ると、答えが空のまま止まる
+    warnings.push(
+      !result.content.trim() && result.thinkingChunks
+        ? "WARNING: the model spent all of max_tokens on thinking and wrote no answer. Raise max_tokens, or use a model without thinking."
+        : "WARNING: output was cut off by max_tokens; the answer is incomplete.",
+    );
   }
 
   // 上限に張り付いたら、Ollama が入力の一部を黙って落とした疑いがある。

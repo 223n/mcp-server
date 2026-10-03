@@ -1,0 +1,27 @@
+@@ -8,7 +8,7 @@ name: CI
+  8| #   lint-workflows  ワークフローの構文と型（actionlint）
+  9| #   zizmor          ワークフローの安全性（zizmor）。アクションの SHA 固定、権限、危険な書き方を見る
+ 10| #   test            サーバーの試験（npm test）。Node 22 と 26 で動かす
+   |-#   docker          Docker イメージを作り、起動して HTTP と stdio の応答を確かめる。
+ 11|+#   docker          Docker イメージを作り、起動して HTTP と stdio の応答と、git が設定ファイルを読めることを確かめる。
+ 12| #                   あわせて Trivy でイメージの脆弱性を見る（apk のパッケージは Dependabot が追わないため）
+ 13| #
+ 14| # プロジェクト固有のビルドやテストは、これらと並ぶジョブとして足す。
+@@ -227,6 +227,17 @@ jobs:
+227|             exit 1
+228|           fi
+229| 
+230|+          # サーバーが git に読ませる設定ファイルを、git が読めること。読めないと git の操作がすべて失敗する。
+231|+          # 試験は手元の git で動くため、このファイルを読むのはイメージの中だけになる。
+232|+          # https 以外を塞ぐ設定が入っていることも、ここで確かめる
+233|+          git_config=$(docker exec \
+234|+            --env GIT_CONFIG_SYSTEM=/etc/git/server.gitconfig --env GIT_CONFIG_GLOBAL=/dev/null \
+235|+            "${CONTAINER}" git config --system --list)
+236|+          echo "git: ${git_config}"
+237|+          grep --quiet --fixed-strings --line-regexp 'safe.directory=*' <<< "${git_config}"
+238|+          grep --quiet --fixed-strings --line-regexp 'protocol.allow=never' <<< "${git_config}"
+239|+          grep --quiet --fixed-strings --line-regexp 'protocol.https.allow=always' <<< "${git_config}"
+240|+
+241|           initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+242| 
+243|           # 応答はいったん変数に受ける。grep を直につなぐと、先に終わった grep で書き手が SIGPIPE になり、
