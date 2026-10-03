@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { after, before, test } from "node:test";
 
+import type { ProgressInfo } from "../src/types.ts";
+
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
 // 手元の .env を読ませないため、設定を読み込む前に作業ディレクトリを移す
@@ -28,9 +30,9 @@ type Deferred = { resolve: (text: string) => void; reject: (error: Error) => voi
 
 // 終わらせる時を試験が決められる生成
 function deferredRun() {
-  const handle: Partial<Deferred> & { progress?: (info: { chunks: number; elapsedMs: number; queued?: number }) => void } = {};
+  const handle: Partial<Deferred> & { progress?: (info: ProgressInfo) => void } = {};
 
-  const run = (onProgress: (info: { chunks: number; elapsedMs: number; queued?: number }) => void) => {
+  const run = (onProgress: (info: ProgressInfo) => void) => {
     handle.progress = onProgress;
 
     return new Promise<string>((resolve, reject) => {
@@ -58,10 +60,17 @@ test("受け付けたジョブは、待ち、生成中、完了と状態が変�
     assert.match(text(ollamaJob({ id })), /: queued, \d+ s since accepted\.\nCheck again/);
   });
 
-  handle.progress?.({ chunks: 0, elapsedMs: 0, queued: 2 });
+  handle.progress?.({ chunks: 0, elapsedMs: 0, ahead: 2 });
 
   withIdentity("alice@example.com", () => {
     assert.match(text(ollamaJob({ id })), /queued \(2 ahead\)/);
+  });
+
+  // 前が抜けて位置が進んだら、その数に変わる。0 は「次に動く」
+  handle.progress?.({ chunks: 0, elapsedMs: 0, ahead: 0 });
+
+  withIdentity("alice@example.com", () => {
+    assert.match(text(ollamaJob({ id })), /queued \(next in line\), \d+ s since accepted/);
   });
 
   handle.progress?.({ chunks: 0, elapsedMs: 0 });

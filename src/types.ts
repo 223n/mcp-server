@@ -91,8 +91,8 @@ export type ProgressInfo = {
   chunks: number;
   elapsedMs: number;
 
-  /** 枠が空くのを待っているときの、自分より前に並んでいる数 */
-  queued?: number;
+  /** 枠が空くのを待っているときの、自分より前に並んでいる数。0 なら次に動く。待っていないときは入れない */
+  ahead?: number;
 
   /** 実行中の生成の数 */
   active?: number;
@@ -212,7 +212,7 @@ export type ChatRequest = {
 
   /**
    * 進み具合の知らせ。クライアントへの進捗の通知とは別に受ける（バックグラウンドのジョブが使う）。
-   * 枠を得て生成を始めたときにも、queued の無い知らせを 1 度送る
+   * 枠を得て生成を始めたときにも、ahead の無い知らせを 1 度送る
    */
   onProgress?: ProgressReporter;
 };

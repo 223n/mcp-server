@@ -40,7 +40,18 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
 
   const mcpReq = ctx?.mcpReq;
 
-  return ({ chunks, elapsedMs, queued }) => {
+  // MCP の progress は、知らせるたびに増やす決まり。待ち行列の位置は列が進むたびに知らせ、
+  // 生成の知らせは生成を始めてからの時間を持つため、どちらの時間も使えない。
+  // 呼び出しを受けてからの秒数を使い、同じ秒に重なったときは前の値より 1 つ進める
+  const started = Date.now();
+
+  let last = -1;
+
+  return ({ chunks, ahead }) => {
+    const progress = Math.max(last + 1, Math.round((Date.now() - started) / 1000));
+
+    last = progress;
+
     mcpReq
       ?.notify?.({
         method: "notifications/progress",
@@ -48,13 +59,14 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
         params: {
           progressToken,
 
-          progress: Math.round(elapsedMs / 1000),
+          progress,
 
-          message: queued
-            ? `Waiting for a free slot on this server (${queued} ahead)…`
-            : chunks === 0
-              ? "Waiting for Ollama (queued / loading model / reading prompt)…"
-              : `Ollama is generating… ${chunks} chunks so far`,
+          message:
+            ahead !== undefined
+              ? `Waiting for a free slot on this server (${ahead === 0 ? "next in line" : `${ahead} ahead`})…`
+              : chunks === 0
+                ? "Waiting for Ollama (queued / loading model / reading prompt)…"
+                : `Ollama is generating… ${chunks} chunks so far`,
         },
       })
       .catch(() => {});
@@ -308,9 +320,10 @@ export async function runChat(
     {
       signal,
 
-      // 待たされていることは、進捗の通知で伝える。黙って止まっているように見せない
-      onWait: ({ active, queued }) =>
-        report?.({ chunks: 0, elapsedMs: 0, queued, active }),
+      // 待たされていることは、進捗の通知で伝える。黙って止まっているように見せない。
+      // 前が抜けて位置が進むたびにも知らせる
+      onWait: ({ active, ahead }) =>
+        report?.({ chunks: 0, elapsedMs: Date.now() - requested, ahead, active }),
     },
   ).catch(async (error: unknown) => {
     throw await explainMissingModel(error, signal);

@@ -21,9 +21,13 @@ export type MockState = { chats: MockChat[]; aborted: number };
 // モデルの名前が "missing:model" なら、入っていないモデルとして HTTP 404 を返す
 //   MOCK_FULL_CONTEXT  prompt_eval_count を num_ctx（無ければ 32768）ちょうどにする（上限に張り付いた警告の試験用）
 //   MOCK_JSON:<文字列>  その行の残りを、そのままモデルの出力として 1 回で返す（構造化したレビューの試験用）
+//   MOCK_HOLD:<名前>  試験が release(名前) を呼ぶまで応答を止め、そのあと普通に返す（待ち行列の試験用）
 // 応答の最初の断片には、受け取ったファイルの数（"### File:" の数）を入れる
 export async function startMockOllama() {
   const state: MockState = { chats: [], aborted: 0 };
+
+  // MOCK_HOLD で止めている応答。名前ごとに、続きを許す関数を持つ
+  const held = new Map<string, () => void>();
 
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/api/version") {
@@ -96,6 +100,17 @@ export async function startMockOllama() {
         return;
       }
 
+      const hold = /MOCK_HOLD:(\w+)/.exec(prompt)?.[1];
+
+      if (hold !== undefined) {
+        await new Promise<void>((resolve) => held.set(hold, resolve));
+
+        // 止めている間に呼び出し側が切れていたら、書かずに終える
+        if (res.destroyed) {
+          return;
+        }
+      }
+
       const slow = prompt.includes("MOCK_SLOW");
 
       const count = slow ? 50 : 3;
@@ -148,8 +163,26 @@ export async function startMockOllama() {
 
     state,
 
+    /** MOCK_HOLD:<name> で止めた応答があれば続けさせ、続けたかどうかを返す */
+    release: (name: string): boolean => {
+      const resume = held.get(name);
+
+      held.delete(name);
+
+      resume?.();
+
+      return resume !== undefined;
+    },
+
     close: () =>
       new Promise<void>((resolve) => {
+        // 止めたままの応答を残すと、接続が閉じきらない
+        for (const resume of held.values()) {
+          resume();
+        }
+
+        held.clear();
+
         server.closeAllConnections();
 
         server.close(() => resolve());
