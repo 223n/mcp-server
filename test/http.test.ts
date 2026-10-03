@@ -122,10 +122,11 @@ describe("認証なしの HTTP", () => {
     test(`${mode}: structured を付けたレビューだけが structuredContent を返す`, async () => {
       const client = await connect(server.url, { mode });
 
+      // evidence と scenario を書かないモデルの出力も、そのまま受け付ける
       const output = JSON.stringify({
         findings: [
-          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする", uncertain: false },
-          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "", uncertain: true },
+          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする" },
+          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "" },
         ],
       });
 
@@ -264,6 +265,23 @@ describe("認証なしの HTTP", () => {
       assert.match(health, /context: not sent/);
 
       assert.match(health, /loaded models: mock:latest \(1\.0 GB VRAM, context 8192, until /);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("考えるだけで上限を使い切り答えが空のときは、切れたとだけ言わず、そのことを警告する", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = text(await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_THINK_ONLY" } }));
+
+      assert.match(result, /WARNING: the model spent all of max_tokens on thinking and wrote no answer\./);
+
+      assert.doesNotMatch(result, /output was cut off by max_tokens/);
+
+      // 考える過程は答えに混ぜない
+      assert.doesNotMatch(result, /step0/);
     } finally {
       await client.close();
     }

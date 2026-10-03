@@ -7,7 +7,7 @@ class OllamaHttpError extends Error {}
 /** /api/chat のストリームの 1 行。done の行にだけ統計が入る */
 type OllamaChatChunk = {
   error?: string;
-  message?: { content?: string };
+  message?: { content?: string; thinking?: string };
   done?: boolean;
   model?: string;
   prompt_eval_count?: number;
@@ -244,12 +244,16 @@ export async function ollamaChat({
 
   let chunks = 0;
 
+  // 考える過程を持つモデル（gpt-oss、qwen3.8 など）は、答えの前に thinking だけを流す。
+  // 答えの断片とは別に数え、考えている間も止まって見えないようにする
+  let thinkingChunks = 0;
+
   let content = "";
 
   // Ollama はヘッダーを最初のトークンと同時に返すので、キュー待ちやプロンプト評価の間も
   // 進捗を送れるよう、リクエストを出す前から通知を始める
   const ticker = onProgress
-    ? setInterval(() => onProgress({ chunks, elapsedMs: Date.now() - started }), 10000)
+    ? setInterval(() => onProgress({ chunks, thinkingChunks, elapsedMs: Date.now() - started }), 10000)
     : undefined;
 
   try {
@@ -282,6 +286,10 @@ export async function ollamaChat({
         content += data.message.content;
 
         chunks += 1;
+      }
+
+      if (data.message?.thinking) {
+        thinkingChunks += 1;
       }
 
       if (data.done) {
@@ -324,6 +332,8 @@ export async function ollamaChat({
 
       doneReason: final.done_reason,
 
+      thinkingChunks,
+
       elapsedMs: Date.now() - started,
     };
   } catch (e) {
@@ -337,6 +347,8 @@ export async function ollamaChat({
         doneReason: "timeout",
 
         timeoutMessage: deadline.describe("/api/chat"),
+
+        thinkingChunks,
 
         elapsedMs: Date.now() - started,
       };

@@ -91,6 +91,9 @@ export type ProgressInfo = {
   chunks: number;
   elapsedMs: number;
 
+  /** 考える過程（thinking）として届いた断片の数。答えの断片は chunks に数える */
+  thinkingChunks?: number;
+
   /** 枠が空くのを待っているときの、自分より前に並んでいる数 */
   queued?: number;
 
@@ -116,6 +119,9 @@ export type ChatResult = {
 
   /** doneReason が "timeout" のときだけ入る、どちらの上限に当たったかの説明 */
   timeoutMessage?: string;
+
+  /** 考える過程として届いた断片の数。答えが空のまま上限に達したときの説明に使う */
+  thinkingChunks?: number;
 
   elapsedMs: number;
 };

@@ -1,0 +1,15 @@
+@@ -11,5 +11,12 @@ jobs:
+11|   check:
+12|     runs-on: ubuntu-latest
+13|     steps:
+  |-      - name: まだ何もしない
+  |-        run: echo "ok"
+14|+      - name: タイトルの形を確かめる
+15|+        # タイトルは PR を開いた人が自由に書けるため、式で run に埋め込まず、環境変数で渡す
+16|+        env:
+17|+          TITLE: ${{ github.event.pull_request.title }}
+18|+        run: |
+19|+          if [[ ! "${TITLE}" =~ ^(feat|fix|docs|chore):\ .+ ]]; then
+20|+            echo "::error::タイトルは「feat: 〜」の形にしてください"
+21|+            exit 1
+22|+          fi

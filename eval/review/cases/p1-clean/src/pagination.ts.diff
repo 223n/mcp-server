@@ -1,0 +1,18 @@
+@@ -5,3 +5,17 @@ export type PageWindow = {
+ 5| };
+ 6| 
+ 7| export const MAX_PAGE_SIZE = 100;
+ 8|+
+ 9|+/**
+10|+ * ページ番号と件数から、取り出す範囲を求める。
+11|+ * page は 1 から数える。範囲の外の値や数でない値は、いちばん近い有効な値に丸める
+12|+ */
+13|+export function pageWindow(total: number, page: number, size: number): PageWindow {
+14|+  const limit = Math.min(Math.max(Math.trunc(size) || 1, 1), MAX_PAGE_SIZE);
+15|+
+16|+  const pages = Math.max(1, Math.ceil(Math.max(total, 0) / limit));
+17|+
+18|+  const current = Math.min(Math.max(Math.trunc(page) || 1, 1), pages);
+19|+
+20|+  return { offset: (current - 1) * limit, limit };
+21|+}
