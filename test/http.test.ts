@@ -789,6 +789,15 @@ describe("生成の枠が 1 つのとき", () => {
       ollama.state.chats.some((chat) => chat.messages.at(-1)?.content.includes(`MOCK_HOLD:${name}`)),
     );
 
+  // 待ち行列に count 件が並んだことを、サーバーの状態で確かめる。
+  // HTTP の要求は着く順番が決まらないため、次の呼び出しはこれを待ってから送る
+  const queued = (client: Client, count: number) =>
+    waitUntil(`${count} call(s) to be queued`, async () =>
+      new RegExp(`concurrency: 1 running, ${count} queued`).test(
+        text(await client.callTool({ name: "ollama_health", arguments: {} })),
+      ),
+    );
+
   test("待っている呼び出しには、前が抜けるたびに新しい位置を進捗で知らせる", async () => {
     const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
 
@@ -798,6 +807,8 @@ describe("生成の枠が 1 つのとき", () => {
       await arrived("sync1");
 
       const second = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:sync2" } });
+
+      await queued(client, 1);
 
       const updates: { progress: number; message?: string }[] = [];
 
@@ -842,9 +853,7 @@ describe("生成の枠が 1 つのとき", () => {
 
       const second = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:job2" } });
 
-      await waitUntil("the second call to be queued", async () =>
-        /concurrency: 1 running, 1 queued/.test(text(await client.callTool({ name: "ollama_health", arguments: {} }))),
-      );
+      await queued(client, 1);
 
       const accepted = await client.callTool({
         name: "ollama_chat",
