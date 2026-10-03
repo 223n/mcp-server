@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { after, test } from "node:test";
 
+import type { WaitInfo } from "../src/ollama/limiter.ts";
+
 import { removeCreatedTrees, WORK_DIR } from "./helpers/server.ts";
 
 process.chdir(WORK_DIR);
@@ -89,19 +91,132 @@ test("待たせるときは、その旨を知らせる", async () => {
 
   const running = limiter.run(() => gate.promise);
 
-  const waits: { active: number; queued: number }[] = [];
+  const waits: WaitInfo[] = [];
 
   const waiting = limiter.run(async () => "ok", { onWait: (info) => waits.push(info) });
 
   await tick();
 
-  assert.deepEqual(waits, [{ active: 1, queued: 1 }]);
+  // 前に並んでいるのは 0 件（次に動く）。自分は数えない
+  assert.deepEqual(waits, [{ active: 1, ahead: 0 }]);
 
   gate.resolve("x");
 
   await running;
 
   await waiting;
+});
+
+test("前が抜けるたびに、後ろに並んだ呼び出しへ新しい位置を知らせる", async () => {
+  const limiter = createLimiter({ max: 1, maxQueue: 8 });
+
+  const gates = [deferred(), deferred(), deferred(), deferred()];
+
+  const [gateR, gate1, gate2, gate3] = gates as [Deferred, Deferred, Deferred, Deferred];
+
+  const running = limiter.run(() => gateR.promise);
+
+  const aheads: number[][] = [[], [], []];
+
+  const waiting = [gate1, gate2, gate3].map((gate, index) =>
+    limiter.run(() => gate.promise, { onWait: ({ ahead }) => aheads[index]?.push(ahead) }),
+  );
+
+  await tick();
+
+  assert.deepEqual(aheads, [[0], [1], [2]]);
+
+  // 実行中のものが終わると、先頭が動き出し、残りは 1 つずつ前に進む。動き出したものには知らせない
+  gateR.resolve("r");
+
+  assert.equal(await running, "r");
+
+  await tick();
+
+  assert.deepEqual(aheads, [[0], [1, 0], [2, 1]]);
+
+  gate1.resolve("1");
+
+  await tick();
+
+  assert.deepEqual(aheads, [[0], [1, 0], [2, 1, 0]]);
+
+  gate2.resolve("2");
+
+  gate3.resolve("3");
+
+  assert.deepEqual(await Promise.all(waiting), ["1", "2", "3"]);
+
+  assert.deepEqual(aheads, [[0], [1, 0], [2, 1, 0]]);
+});
+
+test("待っている間に中断されたら、その後ろに並んだ呼び出しだけが前に進む", async () => {
+  const limiter = createLimiter({ max: 1, maxQueue: 8 });
+
+  const gate = deferred();
+
+  const running = limiter.run(() => gate.promise);
+
+  const controller = new AbortController();
+
+  const aheads: number[][] = [[], [], []];
+
+  const first = limiter.run(async () => "first", { onWait: ({ ahead }) => aheads[0]?.push(ahead) });
+
+  const middle = limiter.run(async () => "middle", {
+    signal: controller.signal,
+
+    onWait: ({ ahead }) => aheads[1]?.push(ahead),
+  });
+
+  const last = limiter.run(async () => "last", { onWait: ({ ahead }) => aheads[2]?.push(ahead) });
+
+  await tick();
+
+  controller.abort();
+
+  await assert.rejects(middle, /Cancelled by the MCP client while queued/);
+
+  assert.deepEqual(aheads, [[0], [1], [2, 1]]);
+
+  gate.resolve("x");
+
+  await running;
+
+  assert.deepEqual(await Promise.all([first, last]), ["first", "last"]);
+});
+
+test("位置の知らせが失敗しても、枠を返した呼び出しは成功し、待ち行列は進む", async () => {
+  const limiter = createLimiter({ max: 1, maxQueue: 8 });
+
+  const gate = deferred();
+
+  const running = limiter.run(() => gate.promise);
+
+  const first = limiter.run(async () => "first");
+
+  let calls = 0;
+
+  // 並んだときの知らせは受け、前に進んだときの知らせで失敗する
+  const second = limiter.run(async () => "second", {
+    onWait: () => {
+      calls += 1;
+
+      if (calls > 1) {
+        throw new Error("notify failed");
+      }
+    },
+  });
+
+  await tick();
+
+  gate.resolve("r");
+
+  assert.equal(await running, "r");
+
+  assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
+
+  assert.equal(calls, 2);
 });
 
 test("待ち行列も一杯なら、待たせずに断る", async () => {

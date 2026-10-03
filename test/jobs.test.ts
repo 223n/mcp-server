@@ -60,10 +60,17 @@ test("受け付けたジョブは、待ち、生成中、完了と状態が変�
     assert.match(text(ollamaJob({ id })), /: queued, \d+ s since accepted\.\nCheck again/);
   });
 
-  handle.progress?.({ chunks: 0, elapsedMs: 0, queued: 2 });
+  handle.progress?.({ chunks: 0, elapsedMs: 0, ahead: 2 });
 
   withIdentity("alice@example.com", () => {
     assert.match(text(ollamaJob({ id })), /queued \(2 ahead\)/);
+  });
+
+  // 前が抜けて位置が進んだら、その数に変わる。0 は「次に動く」
+  handle.progress?.({ chunks: 0, elapsedMs: 0, ahead: 0 });
+
+  withIdentity("alice@example.com", () => {
+    assert.match(text(ollamaJob({ id })), /queued \(next in line\), \d+ s since accepted/);
   });
 
   handle.progress?.({ chunks: 0, elapsedMs: 0 });

@@ -35,7 +35,7 @@ type Job = {
   /** 考える過程として届いた断片の数。答えの断片は chunks に数える */
   thinkingChunks: number;
 
-  /** 枠を待っているときの、自分より前に並んでいる数 */
+  /** 枠を待っているときの、自分より前に並んでいる数。0 なら次に動く */
   ahead?: number;
 
   result?: ToolResult;
@@ -129,12 +129,12 @@ export function startJob(
 
   jobs.set(job.id, job);
 
-  // 枠を待っている間は queued に前の数が入る。それ以外の知らせは、生成が始まったことを表す
-  const onProgress: ProgressReporter = ({ chunks, thinkingChunks, queued }) => {
-    if (queued) {
+  // 枠を待っている間は ahead に前の数が入る（0 なら次に動く）。それ以外の知らせは、生成が始まったことを表す
+  const onProgress: ProgressReporter = ({ chunks, thinkingChunks, ahead }) => {
+    if (ahead !== undefined) {
       job.state = "queued";
 
-      job.ahead = queued;
+      job.ahead = ahead;
 
       return;
     }
@@ -176,10 +176,19 @@ export type JobArgs = {
   id?: string;
 };
 
+// 待ち行列の位置を、状態の行に添える形にする。まだ位置を知らないときは何も添えない
+function queuePosition(ahead: number | undefined): string {
+  if (ahead === undefined) {
+    return "";
+  }
+
+  return ahead === 0 ? " (next in line)" : ` (${ahead} ahead)`;
+}
+
 function statusLine(job: Job, now: number): string {
   switch (job.state) {
     case "queued":
-      return `queued${job.ahead ? ` (${job.ahead} ahead)` : ""}, ${seconds(now - job.createdAt)} s since accepted`;
+      return `queued${queuePosition(job.ahead)}, ${seconds(now - job.createdAt)} s since accepted`;
 
     case "running": {
       // 考える過程を持つモデルは、答えを書き始めるまで数分かかる。止まっていないことを示す
