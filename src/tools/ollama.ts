@@ -40,7 +40,18 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
 
   const mcpReq = ctx?.mcpReq;
 
-  return ({ chunks, elapsedMs, queued }) => {
+  // MCP の progress は、知らせるたびに増やす決まり。待ち行列の位置は列が進むたびに知らせ、
+  // 生成の知らせは生成を始めてからの時間を持つため、どちらの時間も使えない。
+  // 呼び出しを受けてからの秒数を使い、同じ秒に重なったときは前の値より 1 つ進める
+  const started = Date.now();
+
+  let last = -1;
+
+  return ({ chunks, thinkingChunks, ahead }) => {
+    const progress = Math.max(last + 1, Math.round((Date.now() - started) / 1000));
+
+    last = progress;
+
     mcpReq
       ?.notify?.({
         method: "notifications/progress",
@@ -48,13 +59,16 @@ function progressReporter(ctx: ToolContext | undefined): ProgressReporter | unde
         params: {
           progressToken,
 
-          progress: Math.round(elapsedMs / 1000),
+          progress,
 
-          message: queued
-            ? `Waiting for a free slot on this server (${queued} ahead)…`
-            : chunks === 0
-              ? "Waiting for Ollama (queued / loading model / reading prompt)…"
-              : `Ollama is generating… ${chunks} chunks so far`,
+          message:
+            ahead !== undefined
+              ? `Waiting for a free slot on this server (${ahead === 0 ? "next in line" : `${ahead} ahead`})…`
+              : chunks > 0
+                ? `Ollama is generating… ${chunks} chunks so far`
+                : thinkingChunks
+                  ? `The model is thinking before it answers… ${thinkingChunks} chunks so far`
+                  : "Waiting for Ollama (queued / loading model / reading prompt)…",
         },
       })
       .catch(() => {});
@@ -82,6 +96,15 @@ const ASSUMED_CONTEXT = 32768;
 // 渡すファイル以外（利用者の指示、system プロンプト、チャットの書式）に残しておく量
 const CONTEXT_MARGIN = 2048;
 
+/**
+ * DEEP_MODEL を使うツール（レビュー、エラーの説明）の、出力の上限の既定。
+ *
+ * 考える過程を持つモデル（gpt-oss など）は、その過程も num_predict に数える。
+ * gpt-oss:20b はレビュー 1 件で、答えの前に 1,000〜2,000 トークンを考えに使った。
+ * 上限が小さいと、答えを書く前に打ち切られる。持たないモデルは自分で止まるため、大きくしても害は無い
+ */
+export const DEEP_MAX_TOKENS = 8192;
+
 /** 渡すファイルに使ってよい量。OLLAMA_NUM_CTX を設定したときは、そこから出力の分と余白を引く */
 export function inputBudget(maxTokens: number | undefined): number {
   if (!config.ollamaNumCtx) {
@@ -99,7 +122,12 @@ function warningsFor(result: ChatResult): string[] {
   }
 
   if (result.doneReason === "length") {
-    warnings.push("WARNING: output was cut off by max_tokens; the answer is incomplete.");
+    // 考える過程も num_predict に数えるため、考えるだけで上限を使い切ると、答えが空のまま止まる
+    warnings.push(
+      !result.content.trim() && result.thinkingChunks
+        ? "WARNING: the model spent all of max_tokens on thinking and wrote no answer. Raise max_tokens, or use a model without thinking."
+        : "WARNING: output was cut off by max_tokens; the answer is incomplete.",
+    );
   }
 
   // 上限に張り付いたら、Ollama が入力の一部を黙って落とした疑いがある。
@@ -308,9 +336,10 @@ export async function runChat(
     {
       signal,
 
-      // 待たされていることは、進捗の通知で伝える。黙って止まっているように見せない
-      onWait: ({ active, queued }) =>
-        report?.({ chunks: 0, elapsedMs: 0, queued, active }),
+      // 待たされていることは、進捗の通知で伝える。黙って止まっているように見せない。
+      // 前が抜けて位置が進むたびにも知らせる
+      onWait: ({ active, ahead }) =>
+        report?.({ chunks: 0, elapsedMs: Date.now() - requested, ahead, active }),
     },
   ).catch(async (error: unknown) => {
     throw await explainMissingModel(error, signal);

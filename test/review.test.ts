@@ -392,9 +392,10 @@ const finding = (file: string, line: number, extra: Record<string, unknown> = {}
   file,
   line,
   severity: "medium",
+  evidence: `line ${line}`,
+  scenario: `when ${file} runs`,
   problem: `problem at ${file}:${line}`,
   fix: "fix it",
-  uncertain: false,
   ...extra,
 });
 
@@ -450,7 +451,14 @@ test("構造化した指摘は、渡したファイルと行の範囲に照ら�
     ["line out of range", "unknown file", "unknown file", "line out of range", "malformed", "malformed"],
   );
 
-  assert.match(result.content, /^- \[重大度: 中\] C:\\dev\\app\\src\\Main\.php:15: problem at .* → fix it$/m);
+  assert.match(result.content, /^- \[重大度: 中\] C:\\dev\\app\\src\\Main\.php:15: problem at .*（起きる条件: when .*） → fix it$/m);
+
+  // 写しと起きる条件は structuredContent にも載る
+  const first = (result.structured as { findings: { evidence: string; scenario: string }[] }).findings[0];
+
+  assert.equal(first?.evidence, "line 15");
+
+  assert.equal(first?.scenario, "when C:\\dev\\app\\src\\Main.php runs");
 
   assert.match(result.notes.join("\n"), /dropped 6 finding\(s\)/);
 });
@@ -568,9 +576,47 @@ test("structured を付けたときだけ Ollama に format を送り、差分�
 
   assert.equal(mock.state.chats.at(-1)?.format, undefined);
 
-  assert.match(lastPrompt(), /「\[重大度: 高\/中\/低\] ファイル:行: 問題 → 改善案」/);
+  assert.match(lastPrompt(), /「\[重大度: 高\/中\/低\] ファイル:行: 問題（起きる条件: [^）]+） → 改善案」/);
 
   assert.doesNotMatch(lastPrompt(), /JSON/);
+});
+
+test("報告するものを根拠を示せる不具合に絞り、観点は見る場所の手がかりとして渡す", async () => {
+  await ollamaReviewCode({ code: "const a = 1;", focus: "SQL インジェクション" });
+
+  const chat = mock.state.chats.at(-1);
+
+  const system = chat?.messages.find((m) => m.role === "system")?.content ?? "";
+
+  // 好みや推測を報告させず、指摘が無いことを普通の結果として扱わせる
+  assert.match(system, /報告しないもの:/);
+
+  assert.match(system, /指摘が無いのは普通の結果です/);
+
+  assert.doesNotMatch(system, /可読性\n- 保守性/);
+
+  // 観点は、指摘に言い換えさせない注意書きと一緒に渡す
+  assert.match(lastPrompt(), /特に気を付ける観点: SQL インジェクション\n（観点は見る場所の手がかりです。観点ごとに指摘を作る必要はありません）/);
+
+  // 起きる条件を考えさせ、すでに対処していないかを読み直させる
+  assert.match(lastPrompt(), /具体的な入力や状態を考える。示せない候補は捨てる/);
+
+  assert.match(lastPrompt(), /コードがすでに対処していないかを確かめる/);
+
+  assert.match(lastPrompt(), /最大 5 件まで/);
+
+  // structured では、問題の行の写しと起きる条件を JSON に書かせる
+  await ollamaReviewCode({ code: "const a = 1;", structured: true });
+
+  assert.match(lastPrompt(), /"evidence": 問題の行の写し, "scenario": 問題が起きる入力や状態/);
+
+  assert.deepEqual(
+    (mock.state.chats.at(-1)?.format as { properties: { findings: { items: { required: string[] } } } }).properties.findings.items.required,
+    ["file", "line", "severity", "evidence", "scenario", "problem", "fix"],
+  );
+
+  // 観点を渡さなければ、既定の観点を足さない。何を報告するかはシステムプロンプトが決める
+  assert.doesNotMatch(lastPrompt(), /観点/);
 });
 
 test("code 引数のコードは code という名前で、その行数の中だけを通す", async () => {

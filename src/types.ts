@@ -91,8 +91,11 @@ export type ProgressInfo = {
   chunks: number;
   elapsedMs: number;
 
-  /** 枠が空くのを待っているときの、自分より前に並んでいる数 */
-  queued?: number;
+  /** 考える過程（thinking）として届いた断片の数。答えの断片は chunks に数える */
+  thinkingChunks?: number;
+
+  /** 枠が空くのを待っているときの、自分より前に並んでいる数。0 なら次に動く。待っていないときは入れない */
+  ahead?: number;
 
   /** 実行中の生成の数 */
   active?: number;
@@ -116,6 +119,9 @@ export type ChatResult = {
 
   /** doneReason が "timeout" のときだけ入る、どちらの上限に当たったかの説明 */
   timeoutMessage?: string;
+
+  /** 考える過程として届いた断片の数。答えが空のまま上限に達したときの説明に使う */
+  thinkingChunks?: number;
 
   elapsedMs: number;
 };
@@ -212,7 +218,7 @@ export type ChatRequest = {
 
   /**
    * 進み具合の知らせ。クライアントへの進捗の通知とは別に受ける（バックグラウンドのジョブが使う）。
-   * 枠を得て生成を始めたときにも、queued の無い知らせを 1 度送る
+   * 枠を得て生成を始めたときにも、ahead の無い知らせを 1 度送る
    */
   onProgress?: ProgressReporter;
 };

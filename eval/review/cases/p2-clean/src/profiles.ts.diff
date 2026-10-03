@@ -1,0 +1,19 @@
+@@ -6,3 +6,18 @@ export type Profile = {
+ 6|   id: string;
+ 7|   name: string;
+ 8| };
+ 9|+
+10|+/**
+11|+ * プロフィールを取る。無ければ null を返し、それ以外の失敗はそのまま投げる
+12|+ */
+13|+export async function fetchProfile(client: HttpClient, id: string): Promise<Profile | null> {
+14|+  try {
+15|+    return await client.get<Profile>(`/profiles/${encodeURIComponent(id)}`);
+16|+  } catch (error) {
+17|+    if (isNotFound(error)) {
+18|+      return null;
+19|+    }
+20|+
+21|+    throw error;
+22|+  }
+23|+}

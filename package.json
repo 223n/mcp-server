@@ -1,6 +1,6 @@
 {
   "name": "mcp-server",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "private": true,
   "description": "ローカルの Ollama を MCP サーバーとして公開し、Claude から作業を任せられるようにする。",
   "license": "Apache-2.0",
@@ -20,7 +20,7 @@
     "lint:ja:fix": "textlint --fix ."
   },
   "dependencies": {
-    "@modelcontextprotocol/express": "^2.0.0",
+    "@modelcontextprotocol/express": "^2.0.1",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "express": "^5.2.1",

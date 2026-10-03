@@ -1,0 +1,38 @@
+@@ -11,17 +11,15 @@ ENV NODE_ENV=production
+11| # 取得したリポジトリの .git/config（local）はこれでも読まれるため、src/git/exec.ts がコマンドの側の設定で
+12| # 危険な鍵を打ち消し、src/tools/git.ts が操作の前に鍵を許可リストで確かめる。
+13| # safe.directory は、Windows のバインドマウントが別の所有者に見えるために要る。
+  |-# protocol の指定で ext::、file://、git://、ssh:// を塞ぎ、https だけを通す
+14|+# protocol の指定で ext::、file://、git://、ssh:// を塞ぎ、https だけを通す。
+15|+#
+16|+# ファイルは git config に書かせる。printf の %s は引数の \t を展開しないため、手で書くと
+17|+# 「\tdirectory = *」がそのまま残る。git はこれを「bad config line 2」として読めず、git の操作がすべて失敗する
+18| RUN apk add --no-cache git \
+19|     && mkdir -p /etc/git /tmp/git-home \
+  |-    && printf '%s\n' \
+  |-       '[safe]' \
+  |-       '\tdirectory = *' \
+  |-       '[protocol]' \
+  |-       '\tallow = never' \
+  |-       '[protocol "https"]' \
+  |-       '\tallow = always' \
+  |-       > /etc/git/server.gitconfig \
+20|+    && git config --file /etc/git/server.gitconfig safe.directory '*' \
+21|+    && git config --file /etc/git/server.gitconfig protocol.allow never \
+22|+    && git config --file /etc/git/server.gitconfig protocol.https.allow always \
+23|     && chown node:node /tmp/git-home
+24| 
+25| # 監査ログの書き出し先。docker-compose.yml が名前付きボリュームをここにマウントする。
+@@ -32,7 +30,11 @@ WORKDIR /app
+30| 
+31| COPY package.json package-lock.json ./
+32| 
+  |-RUN npm ci --omit=dev && npm cache clean --force
+33|+# 実行時に使うのは node だけなので、依存を入れたら、ベースイメージに同梱の npm と npx を消す。
+34|+# 同梱の npm の依存（brace-expansion、undici など）に脆弱性が見つかっても、その版は npm とベースイメージが
+35|+# 上げるまで変えられない。使わないものを残して、Trivy の検査が落ち続けることを避ける
+36|+RUN npm ci --omit=dev && npm cache clean --force \
+37|+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+38| 
+39| COPY . .
+40| 

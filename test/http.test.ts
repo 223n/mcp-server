@@ -54,6 +54,19 @@ async function post(
   });
 }
 
+// 条件が満たされるまで待つ。満たされなければ、何を待っていたかを添えて失敗させる
+async function waitUntil(label: string, check: () => boolean | Promise<boolean>, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (!(await check())) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${label}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 const INITIALIZE = JSON.stringify({
   jsonrpc: "2.0",
 
@@ -122,10 +135,11 @@ describe("認証なしの HTTP", () => {
     test(`${mode}: structured を付けたレビューだけが structuredContent を返す`, async () => {
       const client = await connect(server.url, { mode });
 
+      // evidence と scenario を書かないモデルの出力も、そのまま受け付ける
       const output = JSON.stringify({
         findings: [
-          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする", uncertain: false },
-          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "", uncertain: true },
+          { file: "code", line: 2, severity: "high", problem: "x を二重に解放する", fix: "free を 1 回にする" },
+          { file: "code", line: 99, severity: "low", problem: "範囲の外", fix: "" },
         ],
       });
 
@@ -264,6 +278,23 @@ describe("認証なしの HTTP", () => {
       assert.match(health, /context: not sent/);
 
       assert.match(health, /loaded models: mock:latest \(1\.0 GB VRAM, context 8192, until /);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("考えるだけで上限を使い切り答えが空のときは、切れたとだけ言わず、そのことを警告する", async () => {
+    const client = await connect(server.url);
+
+    try {
+      const result = text(await client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_THINK_ONLY" } }));
+
+      assert.match(result, /WARNING: the model spent all of max_tokens on thinking and wrote no answer\./);
+
+      assert.doesNotMatch(result, /output was cut off by max_tokens/);
+
+      // 考える過程は答えに混ぜない
+      assert.doesNotMatch(result, /step0/);
     } finally {
       await client.close();
     }
@@ -731,6 +762,144 @@ describe("認証つきで HTTP_ALLOW_WRITES=true にしたとき", () => {
 
         assert.equal(result.isError, true, name);
       }
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("生成の枠が 1 つのとき", () => {
+  let ollama: Awaited<ReturnType<typeof startMockOllama>>;
+
+  let server: Awaited<ReturnType<typeof startHttpServer>>;
+
+  let outDir: string;
+
+  before(async () => {
+    ollama = await startMockOllama();
+
+    outDir = realpathSync(mkdtempSync(path.join(tmpdir(), "mcp-http-queue-")));
+
+    server = await startHttpServer({
+      OLLAMA_URL: ollama.url,
+
+      OLLAMA_MAX_CONCURRENCY: "1",
+
+      MCP_AUTH_TOKEN: "test-token",
+
+      OUTPUT_DIR: outDir,
+
+      HTTP_ALLOW_WRITES: "true",
+    });
+  });
+
+  after(async () => {
+    await server.stop();
+
+    await ollama.close();
+
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  // MOCK_HOLD で止めた呼び出しが Ollama に届いた（枠を得て動き出した）ことを確かめる
+  const arrived = (name: string) =>
+    waitUntil(`${name} to reach Ollama`, () =>
+      ollama.state.chats.some((chat) => chat.messages.at(-1)?.content.includes(`MOCK_HOLD:${name}`)),
+    );
+
+  // 待ち行列に count 件が並んだことを、サーバーの状態で確かめる。
+  // HTTP の要求は着く順番が決まらないため、次の呼び出しはこれを待ってから送る
+  const queued = (client: Client, count: number) =>
+    waitUntil(`${count} call(s) to be queued`, async () =>
+      new RegExp(`concurrency: 1 running, ${count} queued`).test(
+        text(await client.callTool({ name: "ollama_health", arguments: {} })),
+      ),
+    );
+
+  test("待っている呼び出しには、前が抜けるたびに新しい位置を進捗で知らせる", async () => {
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      const first = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:sync1" } });
+
+      await arrived("sync1");
+
+      const second = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:sync2" } });
+
+      await queued(client, 1);
+
+      const updates: { progress: number; message?: string }[] = [];
+
+      const third = client.callTool(
+        { name: "ollama_chat", arguments: { prompt: "third" } },
+
+        { onprogress: ({ progress, message }) => updates.push({ progress, message }) },
+      );
+
+      const said = (pattern: RegExp) => updates.some((update) => pattern.test(update.message ?? ""));
+
+      await waitUntil("1 ahead", () => said(/free slot on this server \(1 ahead\)/));
+
+      ollama.release("sync1");
+
+      await arrived("sync2");
+
+      await waitUntil("next in line", () => said(/free slot on this server \(next in line\)/));
+
+      ollama.release("sync2");
+
+      for (const result of await Promise.all([first, second, third])) {
+        assert.ok(!result.isError, text(result));
+      }
+
+      // MCP の決まりどおり、progress は知らせるたびに増える
+      for (let i = 1; i < updates.length; i += 1) {
+        assert.ok((updates[i]?.progress ?? 0) > (updates[i - 1]?.progress ?? 0), JSON.stringify(updates));
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("バックグラウンドのジョブの状態にも、いまの位置が出る", async () => {
+    const client = await connect(server.url, { headers: { Authorization: "Bearer test-token" } });
+
+    try {
+      const first = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:job1" } });
+
+      await arrived("job1");
+
+      const second = client.callTool({ name: "ollama_chat", arguments: { prompt: "MOCK_HOLD:job2" } });
+
+      await queued(client, 1);
+
+      const accepted = await client.callTool({
+        name: "ollama_chat",
+
+        arguments: { prompt: "queued job", background: true, output_name: "queued-job" },
+      });
+
+      const id = /background job ([0-9a-f-]{36})/.exec(text(accepted))?.[1] ?? "";
+
+      assert.ok(id, text(accepted));
+
+      const status = async () => text(await client.callTool({ name: "ollama_job", arguments: { id } }));
+
+      await waitUntil("queued (1 ahead)", async () => /: queued \(1 ahead\), \d+ s since accepted/.test(await status()));
+
+      ollama.release("job1");
+
+      await arrived("job2");
+
+      await waitUntil("queued (next in line)", async () =>
+        /: queued \(next in line\), \d+ s since accepted/.test(await status()),
+      );
+
+      ollama.release("job2");
+
+      await Promise.all([first, second]);
+
+      await waitUntil("the job to finish", async () => /: done in \d+ s/.test(await status()));
     } finally {
       await client.close();
     }

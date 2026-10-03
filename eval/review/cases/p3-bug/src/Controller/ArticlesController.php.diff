@@ -1,0 +1,23 @@
+@@ -12,4 +12,22 @@ class ArticlesController extends AppController
+12|         $articles = $this->paginate($this->Articles->find());
+13|         $this->set(compact('articles'));
+14|     }
+15|+
+16|+    /**
+17|+     * タイトルの部分一致で記事を探す。
+18|+     */
+19|+    public function search()
+20|+    {
+21|+        $keyword = trim((string)$this->request->getQuery('q', ''));
+22|+        if ($keyword === '' || mb_strlen($keyword) > 100) {
+23|+            throw new BadRequestException('検索語は 1〜100 文字で指定してください');
+24|+        }
+25|+
+26|+        $query = $this->Articles->find()
+27|+            ->where("Articles.title LIKE '%{$keyword}%'")
+28|+            ->orderBy(['Articles.created' => 'DESC']);
+29|+
+30|+        $articles = $this->paginate($query, ['limit' => 20]);
+31|+        $this->set(compact('articles', 'keyword'));
+32|+    }
+33| }

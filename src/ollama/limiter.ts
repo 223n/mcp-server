@@ -8,19 +8,43 @@
  * OLLAMA_MAX_DURATION を 3000 秒まで延ばしたことで、詰まった呼び出し 1 件が
  * 長く枠を占めるようになった。ここで枠の数と待ち行列の長さの両方に上限を設ける。
  */
-type Waiter = { start: () => void };
+
+/** 枠を待っている呼び出しに知らせる、いまの位置 */
+export type WaitInfo = {
+  /** 実行中の生成の数 */
+  active: number;
+
+  /** 自分より前に並んでいる数。0 なら、枠が空けば次に動く */
+  ahead: number;
+};
+
+type Waiter = { start: () => void; onWait?: (info: WaitInfo) => void };
 
 export type LimiterStats = { active: number; queued: number; max: number; maxQueue: number };
 
 export type RunOptions = {
   signal?: AbortSignal;
-  onWait?: (info: { active: number; queued: number }) => void;
+
+  /** 並んだときと、前が抜けて位置が進んだときに呼ぶ */
+  onWait?: (info: WaitInfo) => void;
 };
 
 export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number }) {
   let active = 0;
 
   const queue: Waiter[] = [];
+
+  // 前が抜けたあと、from から後ろに並んでいる呼び出しに新しい位置を知らせる。
+  // ほかの呼び出しの finally や abort の処理の中から呼ぶため、知らせの失敗で列を止めない
+  function announce(from: number) {
+    for (let index = from; index < queue.length; index += 1) {
+      try {
+        queue[index]?.onWait?.({ active, ahead: index });
+      } catch {
+        // 位置の知らせは補助。失敗しても待ち行列は進める
+      }
+    }
+  }
 
   function next() {
     if (active >= max) {
@@ -39,6 +63,8 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
     active += 1;
 
     waiter.start();
+
+    announce(0);
   }
 
   return {
@@ -64,7 +90,8 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
           );
         }
 
-        onWait?.({ active, queued: queue.length + 1 });
+        // 並ぶ前に知らせる。ここで失敗しても、並んでいないので席をふさがない
+        onWait?.({ active, ahead: queue.length });
 
         await new Promise<void>((resolve, reject) => {
           const waiter: Waiter = {
@@ -73,6 +100,8 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
 
               resolve();
             },
+
+            onWait,
           };
 
           function onAbort() {
@@ -80,6 +109,9 @@ export function createLimiter({ max, maxQueue }: { max: number; maxQueue: number
 
             if (index >= 0) {
               queue.splice(index, 1);
+
+              // 後ろに並んでいた呼び出しは、1 つ前に進む
+              announce(index);
             }
 
             reject(new Error("Cancelled by the MCP client while queued"));
