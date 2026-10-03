@@ -1,0 +1,36 @@
+{
+  "description": "ollama_review_code の誤指摘と見落としを測る材料。cases/<id>/ の .diff は、本番の numberDiff で行番号を振った差分の本文で、ファイルの名前は元のパスに .diff を足したもの。bug の lines は、新しいファイルでの行番号（.diff の左側の番号）。",
+  "cases": [
+    { "id": "p1-clean", "kind": "clean", "language": "TypeScript", "note": "1 から数えるページ番号から offset を求める。範囲の外は丸める" },
+    {
+      "id": "p1-bug", "kind": "bug", "language": "TypeScript",
+      "bugs": [{ "file": "src/pagination.ts", "lines": [20, 20], "summary": "page は 1 から数えるのに offset を current * limit にしており、1 ページ目を飛ばす。(current - 1) * limit が正しい" }]
+    },
+    { "id": "p2-clean", "kind": "clean", "language": "TypeScript", "note": "404 を null に変える。try の中で await してから返す" },
+    {
+      "id": "p2-bug", "kind": "bug", "language": "TypeScript",
+      "bugs": [{ "file": "src/profiles.ts", "lines": [15, 15], "summary": "try の中で await せずに Promise を返すため、404 の reject が catch に届かず、null を返さずに例外になる" }]
+    },
+    { "id": "p3-clean", "kind": "clean", "language": "PHP (CakePHP 5)", "note": "検索語を条件の配列で渡し（プレースホルダー）、LIKE のワイルドカードもエスケープする" },
+    {
+      "id": "p3-bug", "kind": "bug", "language": "PHP (CakePHP 5)",
+      "bugs": [{ "file": "src/Controller/ArticlesController.php", "lines": [27, 27], "summary": "利用者の検索語を SQL の文字列に埋め込んでおり、SQL インジェクションになる" }]
+    },
+    { "id": "p4-clean", "kind": "clean", "language": "Bash", "note": "作業ディレクトリを trap で消し、14 日より古いバックアップを消す（-mtime +14）" },
+    {
+      "id": "p4-bug", "kind": "bug", "language": "Bash",
+      "bugs": [{ "file": "scripts/backup.sh", "lines": [16, 16], "summary": "-mtime -14 は 14 日より新しいものに当たり、注釈と逆に新しいバックアップを消す。+14 が正しい" }]
+    },
+    { "id": "p5-clean", "kind": "clean", "language": "TypeScript", "note": "デコードしてから解決し、path.relative でルートの外を拒む" },
+    {
+      "id": "p5-bug", "kind": "bug", "language": "TypeScript",
+      "bugs": [{ "file": "src/storage.ts", "lines": [11, 15], "summary": "デコードする前の文字列で .. を確かめるため、%2e%2e%2f で検査を抜けてルートの外（/srv/etc/passwd など）を指せる" }]
+    },
+    { "id": "p6-clean", "kind": "clean", "language": "GitHub Actions", "note": "PR のタイトルを環境変数で渡してから確かめる" },
+    {
+      "id": "p6-bug", "kind": "bug", "language": "GitHub Actions",
+      "bugs": [{ "file": ".github/workflows/pr-title.yml", "lines": [16, 16], "summary": "PR のタイトルを式で run に埋め込んでおり、タイトルに書いたコマンドが動く（script injection）" }]
+    },
+    { "id": "pr40", "kind": "clean", "language": "Dockerfile, GitHub Actions, Markdown, JSON", "note": "223n/mcp-server#40 の実際の差分。イメージを作って動かし、不具合が無いことを確かめた" }
+  ]
+}

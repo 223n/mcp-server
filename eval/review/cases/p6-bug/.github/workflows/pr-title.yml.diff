@@ -1,0 +1,12 @@
+@@ -11,5 +11,9 @@ jobs:
+11|   check:
+12|     runs-on: ubuntu-latest
+13|     steps:
+  |-      - name: まだ何もしない
+  |-        run: echo "ok"
+14|+      - name: タイトルの形を確かめる
+15|+        run: |
+16|+          if [[ ! "${{ github.event.pull_request.title }}" =~ ^(feat|fix|docs|chore):\ .+ ]]; then
+17|+            echo "::error::タイトルは「feat: 〜」の形にしてください"
+18|+            exit 1
+19|+          fi

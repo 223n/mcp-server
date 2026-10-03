@@ -1,0 +1,15 @@
+@@ -4,4 +4,13 @@ set -euo pipefail
+ 4| 
+ 5| : "${BACKUP_DIR:?BACKUP_DIR is required}"
+ 6| 
+  |-mysqldump --single-transaction app > "${BACKUP_DIR}/app-$(date +%F).sql"
+ 7|+work_dir="$(mktemp -d)"
+ 8|+trap 'rm -rf -- "${work_dir}"' EXIT
+ 9|+
+10|+dump="${work_dir}/app-$(date +%F).sql"
+11|+mysqldump --single-transaction app > "${dump}"
+12|+gzip -- "${dump}"
+13|+mv -- "${dump}.gz" "${BACKUP_DIR}/"
+14|+
+15|+# 14 日より古いバックアップを消す
+16|+find "${BACKUP_DIR}" -maxdepth 1 -name 'app-*.sql.gz' -mtime +14 -delete
