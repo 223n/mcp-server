@@ -20,7 +20,7 @@
     "lint:ja:fix": "textlint --fix ."
   },
   "dependencies": {
-    "@modelcontextprotocol/express": "^2.0.1",
+    "@modelcontextprotocol/express": "^2.0.2",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "express": "^5.2.1",
@@ -32,7 +32,7 @@
     "@modelcontextprotocol/client": "^2.3.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
-    "markdownlint-cli2": "^0.23.3",
+    "markdownlint-cli2": "^0.24.0",
     "textlint": "^15.8.0",
     "typescript": "^7.0.2"
   },
