@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
 
       - name: Nodeを用意
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # markdownlint-cli2 0.23 が Node 22 以上を求める
           node-version: '22'
@@ -71,7 +71,7 @@ jobs:
           persist-credentials: false
 
       - name: Nodeを用意
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -123,7 +123,7 @@ jobs:
         # zizmor-action はコンテナで動くため、セルフホストのランナーには Docker が要る。
         # advanced-security を切ると Code scanning へは送らず、指摘があればこのジョブが失敗する。
         # zizmor の版は固定する。版が上がると監査が増えて、変更していないのに落ちることがあるため
-        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:
           version: v1.30.0
           advanced-security: false
@@ -147,7 +147,7 @@ jobs:
           persist-credentials: false
 
       - name: Nodeを用意
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
