@@ -1,6 +1,6 @@
 # 版とダイジェストで固定し、Dependabot が両方の更新を提案する。
 # タグに Alpine の版（alpine3.24 など）を含めると、Alpine が上がったときに Dependabot が追えなくなるため含めない
-FROM node:26.11.1-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
+FROM node:26.13.0-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
 
 ENV NODE_ENV=production
 
